@@ -10,10 +10,17 @@ import os
 
 import pytest
 
-from agente.agente import alinear_con_candidatos, item_deterministico, responder
+from agente.agente import (
+    alinear_con_candidatos,
+    es_pregunta_de_recomendacion,
+    item_deterministico,
+    parametros_de_pregunta,
+    responder,
+)
 from agente.recomendaciones import PREFIJO_PREVENTIVA, candidatos_visita
 from agente.verificador import verificar_respuesta
 from agente.esquemas import RespuestaFinal
+from agente.config import MAX_PASOS
 from tests.fakes import ModeloFalso, ai, final, llamada
 
 SIN_CLAVE = not os.environ.get("ANTHROPIC_API_KEY", "").strip()
@@ -134,13 +141,15 @@ def test_region_costa(datos):
     chequear_json(r)
 
 
-def test_recomendaciones_sin_candidatos_visita_se_marca(datos):
+def test_recomendaciones_sin_candidatos_visita_descarta_inventados(datos):
     items = [{"sucursal_id": "S012", "motivo": "Muchas quejas.", "evidencia": "Ver datos.",
               "accion_sugerida": "Visitar."}]
     guion = [final_recos(items)]
     r = responder(PREGUNTA, modelo=ModeloFalso(guion), datos=datos)
-    assert ids(r) == ["S012"]
-    assert any("candidatos_visita" in a for a in r.traza["advertencias"])
+    assert ids(r) == CADENA
+    assert all(it.evidencia != "Ver datos." for it in r.recomendaciones)
+    assert any("determinística" in a and "candidatos_visita" in a for a in r.traza["advertencias"])
+    chequear_json(r)
 
 
 def test_item_deterministico_preventiva_y_nuevas(datos):
@@ -241,3 +250,119 @@ def test_items_deterministicos_verifican_por_construccion(datos, kw):
     assert v["ok"], v
     for item, c in zip(items, res["resultado"]["candidatos"]):
         assert item.motivo.startswith(PREFIJO_PREVENTIVA) == bool(c["preventiva"])
+
+
+# --------------------------------------------------------------------------- clasificador y red de seguridad (C2)
+
+
+@pytest.mark.parametrize("pregunta", PIDEN_RECOMENDACION)
+def test_clasificador_pide_recomendacion(pregunta):
+    assert es_pregunta_de_recomendacion(pregunta)
+
+
+@pytest.mark.parametrize("pregunta", NO_PIDEN_RECOMENDACION)
+def test_clasificador_no_pide_recomendacion(pregunta):
+    assert not es_pregunta_de_recomendacion(pregunta)
+
+
+@pytest.mark.parametrize(
+    "pregunta, esperado",
+    [
+        ("¿qué sucursales de Costa necesitan atención?", {"region": "Costa"}),
+        ("¿dónde tengo que reforzar la limpieza?", {"categoria": "limpieza"}),
+        ("recomendame 3 sucursales para visitar", {"n": 3}),
+        ("dame 4 locales del norte con problemas de demora", {"n": 4, "region": "Norte", "categoria": "demora"}),
+        ("¿qué sucursales debería visitar? quejas por pedido incorrecto", {"categoria": "pedido_incorrecto"}),
+        ("dame tres sucursales del Sur para visitar", {"n": 3, "region": "Sur"}),
+        ("¿qué sucursales debería visitar?", {}),
+    ],
+)
+def test_parametros_de_pregunta(pregunta, esperado):
+    assert parametros_de_pregunta(pregunta) == esperado
+
+
+def _chequear_deterministico(r, esperado_ids, motivo):
+    salida = chequear_json(r)
+    assert [i["sucursal_id"] for i in salida] == esperado_ids
+    assert r.tipo_respuesta == "recomendaciones"
+    assert any(a.startswith("Recomendaciones armadas en forma determinística porque") and motivo in a
+               for a in r.traza["advertencias"]), r.traza["advertencias"]
+
+
+def test_candidatos_y_corte_por_pasos_da_json(datos):
+    guion = [ai(llamada("candidatos_visita", region="Costa"))] + [
+        ai(llamada("info_datos")) for _ in range(MAX_PASOS - 1)
+    ]
+    r = responder("¿Qué sucursales de Costa necesitan atención?", modelo=ModeloFalso(guion), datos=datos)
+    _chequear_deterministico(r, [c["sucursal_id"] for c in candidatos(datos, region="Costa")], "máximo de pasos")
+
+
+def test_candidatos_y_respuesta_tipo_dato_da_json(datos):
+    guion = [
+        ai(llamada("candidatos_visita", n=3)),
+        final(tipo_respuesta="dato", texto="Visitá S112.", valor="S112", tipo_valor="texto"),
+    ]
+    r = responder("recomendame 3 sucursales para visitar", modelo=ModeloFalso(guion), datos=datos)
+    _chequear_deterministico(r, CADENA[:3], "tipo dato")
+
+
+def test_candidatos_con_args_no_normalizados_usa_ese_resultado(datos):
+    guion = [
+        ai(llamada("candidatos_visita", region="costa", categoria="Limpieza")),
+        final(tipo_respuesta="dato", texto="Hay que ir a la costa.", valor=None, tipo_valor="ninguno"),
+    ]
+    r = responder("¿qué sucursales visito?", modelo=ModeloFalso(guion), datos=datos)
+    _chequear_deterministico(
+        r, [c["sucursal_id"] for c in candidatos(datos, region="Costa", categoria="limpieza")], "tipo dato"
+    )
+
+
+def test_args_invalidos_repetidos_da_json(datos):
+    guion = [ai(llamada("candidatos_visita", region="Atlántida")) for _ in range(MAX_PASOS)]
+    r = responder("¿qué sucursales de Costa necesitan atención?", modelo=ModeloFalso(guion), datos=datos)
+    _chequear_deterministico(r, [c["sucursal_id"] for c in candidatos(datos, region="Costa")], "máximo de pasos")
+
+
+def test_respuesta_final_invalida_repetida_da_json(datos):
+    guion = [final(tipo_respuesta="malo") for _ in range(MAX_PASOS)]
+    r = responder("dame un plan de visitas", modelo=ModeloFalso(guion), datos=datos)
+    _chequear_deterministico(r, CADENA, "máximo de pasos")
+
+
+def test_pregunta_de_recomendacion_respondida_como_dato_sin_candidatos_da_json(datos):
+    guion = [final(tipo_respuesta="dato", texto="Revisá la limpieza.", valor=None, tipo_valor="ninguno")]
+    r = responder("¿dónde tengo que reforzar la limpieza?", modelo=ModeloFalso(guion), datos=datos)
+    _chequear_deterministico(r, [c["sucursal_id"] for c in candidatos(datos, categoria="limpieza")], "tipo dato")
+
+
+class _ModeloQueFalla(ModeloFalso):
+    def invoke(self, messages, config=None, **kw):
+        raise RuntimeError("overloaded_error: el proveedor no responde")
+
+
+def test_error_del_modelo_en_pregunta_de_recomendacion_da_json(datos):
+    r = responder("recomendame 3 sucursales para visitar", modelo=_ModeloQueFalla([]), datos=datos)
+    _chequear_deterministico(r, CADENA[:3], "el modelo falló")
+    assert "overloaded_error" in r.traza["error"]
+
+
+def test_rate_limit_en_pregunta_de_recomendacion_se_propaga(datos):
+    class RateLimitError(Exception):
+        pass
+
+    class Modelo(ModeloFalso):
+        def invoke(self, messages, config=None, **kw):
+            raise RateLimitError("Error code: 429")
+
+    with pytest.raises(RateLimitError):
+        responder("¿qué sucursales debería visitar?", modelo=Modelo([]), datos=datos)
+
+
+def test_dato_que_no_es_recomendacion_no_se_toca(datos):
+    guion = [
+        ai(llamada("ranking_sucursales", n=1)),
+        final(tipo_respuesta="dato", texto="La peor es S112.", valor="S112", tipo_valor="texto"),
+    ]
+    r = responder("¿cuál es la peor sucursal?", modelo=ModeloFalso(guion), datos=datos)
+    assert r.tipo_respuesta == "dato" and r.texto.startswith("La peor es S112.")
+    assert not any("determinística" in a for a in r.traza["advertencias"])

@@ -66,12 +66,55 @@ def test_tools_ejecutan_con_datos_y_respetan_defaults(datos):
     assert tools["candidatos_visita"].invoke({})["resultado"]["candidatos"]
 
 
-def test_literal_rechaza_region_invalida(datos):
-    from pydantic import ValidationError
+def test_region_invalida_llega_a_la_herramienta_y_vuelve_error_c2(datos):
+    """M4: region/categoria/canal son str; la herramienta pura normaliza o devuelve error con válidos."""
+    tools = {t.name: t for t in crear_herramientas(datos)}
+    res = tools["contar_quejas"].invoke({"region": "Atlántida"})
+    assert "error" in res and "Norte" in res["valores_validos"]
 
-    tool = {t.name: t for t in crear_herramientas(datos)}["contar_quejas"]
-    with pytest.raises(ValidationError):
-        tool.invoke({"region": "Atlántida"})
+
+@pytest.mark.parametrize(
+    "args", [{"region": "norte"}, {"canal": "teléfono"}, {"categoria": "Limpieza"}, {"region": "COSTA", "canal": "App"}]
+)
+def test_valores_sin_normalizar_llegan_y_se_normalizan(datos, args):
+    tools = {t.name: t for t in crear_herramientas(datos)}
+    res = tools["contar_quejas"].invoke(args)
+    assert "error" not in res, res
+
+
+def test_candidatos_visita_normaliza_region_y_categoria(datos):
+    tools = {t.name: t for t in crear_herramientas(datos)}
+    from agente.recomendaciones import candidatos_visita
+
+    res = tools["candidatos_visita"].invoke({"region": "costa", "categoria": "Limpieza"})
+    assert res == candidatos_visita(datos, region="Costa", categoria="limpieza")
+    assert "error" in tools["candidatos_visita"].invoke({"region": "Atlántida"})
+
+
+def test_schemas_tienen_parametros_nuevos_y_los_none_no_se_pasan(datos, monkeypatch):
+    from agente import herramientas_lc
+
+    tools = {t.name: t for t in crear_herramientas(datos)}
+    for nombre in ("contar_quejas", "pedidos", "tasa_quejas", "ranking_sucursales"):
+        props = convert_to_anthropic_tool(tools[nombre])["input_schema"]["properties"]
+        assert "ciudad" in props, nombre
+        assert props["region"].get("type") == "string" or any(
+            o.get("type") == "string" for o in props["region"].get("anyOf", [])
+        )
+    for nombre in ("pedidos", "tasa_quejas"):
+        props = convert_to_anthropic_tool(tools[nombre])["input_schema"]["properties"]
+        assert "cronologico" in json.dumps(props["orden"])
+    assert "10" in convert_to_anthropic_tool(tools["candidatos_visita"])["input_schema"]["properties"]["n"]["description"]
+
+    recibidos = {}
+
+    def falsa(datos_, **kw):
+        recibidos.update(kw)
+        return {"resultado": {}}
+
+    ejecutar = herramientas_lc._envolver(falsa, datos)
+    ejecutar(region="Norte", ciudad=None, orden=None, n=None)
+    assert recibidos == {"region": "Norte"}
 
 
 # --------------------------------------------------------------------------- prompt

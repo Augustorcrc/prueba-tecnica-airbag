@@ -1,4 +1,8 @@
-"""CLI: python main.py "pregunta" [--traza]."""
+"""CLI: python main.py "pregunta" [--traza].
+
+Códigos de salida: 0 = ok; 1 = error (clave faltante, datos que no se pueden cargar u otro);
+2 = uso incorrecto; 3 = límite de tasa del proveedor.
+"""
 
 from __future__ import annotations
 
@@ -20,13 +24,16 @@ def main(argv: list[str] | None = None) -> int:
     except FaltaVariableDeEntorno as e:
         print(f"Error: {e}", file=sys.stderr)
         return 1
-    from agente.agente import responder
+    from agente.agente import es_rate_limit, responder
 
     try:
         respuesta = responder(argv[0])
-    except Exception as e:  # noqa: BLE001  (solo llegan acá los límites de tasa del proveedor)
-        print(f"Error del proveedor (límite de tasa): {e}. Probá de nuevo en unos segundos.", file=sys.stderr)
-        return 3
+    except Exception as e:  # noqa: BLE001  (límite de tasa, datos inexistentes u otro error)
+        if es_rate_limit(e):
+            print(f"Error del proveedor (límite de tasa): {e}. Probá de nuevo en unos segundos.", file=sys.stderr)
+            return 3
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
     # Para recomendaciones, `salida_para_usuario()` es SOLO el JSON.
     print(respuesta.salida_para_usuario())
     if mostrar_traza:

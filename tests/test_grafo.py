@@ -254,7 +254,7 @@ def test_corte_por_pasos():
     assert salida["advertencias"]
 
 
-def test_paso_ocho_con_respuesta_final_se_procesa():
+def test_ultimo_paso_con_respuesta_final_se_procesa():
     guion = [ai(llamada("contar_quejas_stub", region="Norte")) for _ in range(MAX_PASOS - 1)]
     guion.append(final_dato("Hubo 137 quejas.", 137))
     salida, _, _ = correr(guion)
@@ -262,20 +262,60 @@ def test_paso_ocho_con_respuesta_final_se_procesa():
 
 
 def test_peor_caso_no_supera_recursion_limit():
-    """Mezcla de recordatorios, finales inválidas y verificación fallida dentro de 25 supersteps."""
+    """Mezcla de recordatorios, finales inválidas y verificación fallida dentro de RECURSION_LIMIT supersteps."""
+    relleno = [
+        lambda: ai(texto="hola"),
+        lambda: final(tipo_respuesta="malo"),
+        lambda: ai(llamada("contar_quejas_stub", region="Sur")),
+    ]
     guion = [
         ai(texto="hola"),
         final(tipo_respuesta="malo"),
         ai(llamada("contar_quejas_stub", region="Norte")),
-        final_dato("Hubo 999.", 999),
-        ai(texto="hola"),
-        final(tipo_respuesta="malo"),
-        ai(llamada("contar_quejas_stub", region="Sur")),
-        final_dato("Hubo 998.", 998),
+        final_dato("Hubo 999.", 999),  # falla la verificación → feedback (el camino más largo)
     ]
+    while len(guion) < MAX_PASOS - 1:
+        guion.append(relleno[len(guion) % len(relleno)]())
+    guion.append(final_dato("Hubo 998.", 998))  # segunda falla → cerrar_con_advertencia
+    assert len(guion) == MAX_PASOS
     salida, modelo, _ = correr(guion)
     assert modelo.n_invocaciones == MAX_PASOS
     assert "⚠️ No pude verificar la cifra 998" in salida["respuesta"].texto
+
+
+def test_tool_choice_segun_modelo():
+    class ConNombre(ModeloFalso):
+        def __init__(self, guion, model):
+            super().__init__(guion)
+            self.model = model
+
+    for nombre, esperado in [
+        ("claude-sonnet-5-5", "auto"),
+        ("claude-opus-5-5", "auto"),
+        ("claude-fable-5-1", "auto"),
+        ("claude-haiku-5-5", "any"),
+    ]:
+        modelo = ConNombre([], nombre)
+        construir_grafo(modelo, HERRAMIENTAS)
+        assert modelo.tool_choice == esperado, nombre
+    # sin nombre (modelo falso) → "any"; el valor explícito manda
+    sin_nombre = ModeloFalso([])
+    construir_grafo(sin_nombre, HERRAMIENTAS)
+    assert sin_nombre.tool_choice == "any"
+    explicito = ConNombre([], "claude-haiku-5-5")
+    construir_grafo(explicito, HERRAMIENTAS, tool_choice="auto")
+    assert explicito.tool_choice == "auto"
+
+
+def test_texto_libre_con_auto_pasa_por_recordatorio():
+    """Con tool_choice="auto" el modelo puede contestar texto: el recordatorio lo reencauza."""
+    salida, modelo, _ = correr(
+        [ai(texto="Son 137."), ai(llamada("contar_quejas_stub", region="Norte")), final_dato("Hubo 137 quejas.", 137)],
+        tool_choice="auto",
+    )
+    assert modelo.tool_choice == "auto"
+    assert salida["respuesta"].valor == 137
+    assert any(isinstance(m, HumanMessage) and m.content == nodos.RECORDATORIO for m in modelo.recibidos[1])
 
 
 def test_herramienta_que_lanza_excepcion():
@@ -299,7 +339,8 @@ def test_herramienta_desconocida_y_args_invalidos():
 
 
 def test_config_invocacion():
-    assert config_invocacion() == {"recursion_limit": RECURSION_LIMIT} == {"recursion_limit": 25}
+    assert config_invocacion() == {"recursion_limit": RECURSION_LIMIT}
+    assert MAX_PASOS == 10 and RECURSION_LIMIT == 30
 
 
 def test_diagrama_mermaid_actualizado():
