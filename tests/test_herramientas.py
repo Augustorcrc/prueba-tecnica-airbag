@@ -435,6 +435,10 @@ BATERIA = [
     (h.efecto_capacitacion, {}),
     (h.contar_quejas, {"sucursal_id": "S999"}),
     (h.contar_quejas, {"mes": "2026-04"}),
+    (h.pedidos, {"agrupar_por": "fecha", "n": 30, "orden": "desc", "fecha_desde": "2025-12-01"}),
+    (h.tasa_quejas, {"agrupar_por": "sucursal", "n": 30, "orden": "asc", "fecha_hasta": "2026-05-01"}),
+    (h.ranking_sucursales, {"metrica": "tasa", "n": 30, "ciudad": "Cancún"}),
+    (h.contar_quejas, {"ciudad": "Gotham"}),
 ]
 
 
@@ -460,3 +464,131 @@ def test_verificador_encuentra_cifras(datos):
     assert verificar_numeros("El Sur recibió 442 quejas en febrero.", [p02], "") == []
     # Una cifra inventada no verifica.
     assert verificar_numeros("La tasa fue 7,77.", [p03], "") == ["7,77"]
+
+
+# --- Fix B: orden y extremos (I3) -------------------------------------------------------------
+
+def _pedidos_por_fecha(datos):
+    d = datos.diario_sucursal
+    v = d[~d["dato_invalido"].astype(bool)]
+    return v.groupby(v["fecha"].dt.strftime("%Y-%m-%d"))["pedidos_validos"].sum().astype("int64")
+
+
+def test_pedidos_dia_con_mas_pedidos(datos):
+    serie = _pedidos_por_fecha(datos)
+    r = _ok(h.pedidos(datos, agrupar_por="fecha", orden="desc", n=1))
+    assert r["grupos"] == [{"clave": "2026-02-07", "pedidos": 46461}]
+    assert serie.idxmax() == "2026-02-07" and int(serie.max()) == 46461
+    assert o.pedidos_total(desde="2026-02-07", hasta="2026-02-07") == 46461
+    assert r["maximo"] == {"clave": "2026-02-07", "pedidos": 46461}
+
+
+def test_pedidos_recorte_informa_extremos(datos):
+    serie = _pedidos_por_fecha(datos)
+    s = h.pedidos(datos, agrupar_por="fecha", n=5)
+    r = _ok(s)
+    assert [g["clave"] for g in r["grupos"]] == list(serie.index[:5])  # sigue cronológico
+    assert r["maximo"] == {"clave": "2026-02-07", "pedidos": 46461}
+    assert r["minimo"] == {"clave": serie.idxmin(), "pedidos": int(serie.min())}
+    # Sin recorte no hay extremos.
+    assert "maximo" not in _ok(h.pedidos(datos, agrupar_por="mes"))
+
+
+def test_pedidos_orden_asc_y_cronologico(datos):
+    serie = _pedidos_por_fecha(datos)
+    r = _ok(h.pedidos(datos, agrupar_por="fecha", orden="asc", n=1))
+    assert r["grupos"][0] == {"clave": serie.idxmin(), "pedidos": int(serie.min())}
+    r = _ok(h.pedidos(datos, agrupar_por="dia_semana", orden="cronologico",
+                      agregacion="promedio_por_sucursal_dia"))
+    assert [g["clave"] for g in r["grupos"]] == ["lunes", "martes", "miércoles", "jueves", "viernes",
+                                                  "sábado", "domingo"]
+    # orden None mantiene el comportamiento anterior (desc para dia_semana).
+    r = _ok(h.pedidos(datos, agrupar_por="dia_semana", agregacion="promedio_por_sucursal_dia"))
+    assert r["grupos"][0]["clave"] == o.dia_semana_mas_pedidos_promedio()
+
+
+def test_tasa_orden_y_extremos(datos):
+    r = _ok(h.tasa_quejas(datos, agrupar_por="semana", orden="desc", n=2))
+    todas = _ok(h.tasa_quejas(datos, agrupar_por="semana"))["grupos"]
+    mayor = max(todas, key=lambda g: g["tasa_por_1000"])
+    assert r["grupos"][0]["clave"] == mayor["clave"] == r["maximo"]["clave"]
+    assert r["maximo"]["tasa_por_1000"] == mayor["tasa_por_1000"]
+    r = _ok(h.tasa_quejas(datos, agrupar_por="region", orden="asc"))
+    tasas = [g["tasa_por_1000"] for g in r["grupos"]]
+    assert tasas == sorted(tasas)
+
+
+@pytest.mark.parametrize("f", [h.pedidos, h.tasa_quejas])
+def test_orden_invalido(datos, f):
+    s = f(datos, agrupar_por="mes", orden="aleatorio")
+    assert "error" in s and s["valores_validos"] == ["desc", "asc", "cronologico"]
+
+
+# --- Fix B: filtro ciudad (I7) ----------------------------------------------------------------
+
+def test_filtro_ciudad(datos):
+    ids = sorted(datos.sucursales.loc[datos.sucursales["ciudad"] == "Cancún", "sucursal_id"])
+    assert len(ids) == 5
+    q = _ok(h.contar_quejas(datos, ciudad="cancun"))
+    assert q["total"] == o.contar_quejas(sucursal=ids)
+    assert h.contar_quejas(datos, ciudad="CANCÚN")["filtros_aplicados"]["ciudad"] == "Cancún"
+    p = _ok(h.pedidos(datos, ciudad="Cancún"))
+    assert p["pedidos"] == o.pedidos_total(sucursal=ids)
+    t = _ok(h.tasa_quejas(datos, ciudad="cancún"))
+    assert t["tasa_por_1000"] == pytest.approx(o.tasa(sucursal=ids), abs=1e-4)
+    r = _ok(h.ranking_sucursales(datos, ciudad="Cancún", metrica="quejas", n=30))
+    assert sorted(_ids(h.ranking_sucursales(datos, ciudad="Cancún", metrica="quejas", n=30))) == ids
+    assert r["total_en_ranking"] == 5
+
+
+def test_ciudad_inexistente(datos):
+    s = h.pedidos(datos, ciudad="Gotham")
+    assert "error" in s and "Cancún" in s["valores_validos"]
+    assert len(s["valores_validos"]) == datos.sucursales["ciudad"].nunique()
+    assert len(json.dumps(s)) < 4096
+
+
+def test_ciudad_y_region_incompatibles(datos):
+    region_cancun = datos.sucursales.loc[datos.sucursales["ciudad"] == "Cancún", "region"].iloc[0]
+    otra = next(r for r in ("Norte", "Centro", "Costa", "Sur") if r != region_cancun)
+    s = h.contar_quejas(datos, ciudad="Cancún", region=otra)
+    assert s["resultado"]["total"] == 0
+    assert any("no pertenece a la región" in a for a in s["advertencias"])
+
+
+def test_valores_acotados():
+    largos = [f"ciudad_{i:04d}_" + "x" * 40 for i in range(200)]
+    out = h._valores_acotados(largos)
+    assert len(json.dumps(out)) <= h.MAX_BYTES_VALORES_VALIDOS
+    assert out[-1] == "... (200 en total)" and len(out) < 200
+
+
+# --- Fix B: tasa por sucursal marca las nuevas (M3) --------------------------------------------
+
+def test_tasa_por_sucursal_marca_nuevas(datos):
+    s = h.tasa_quejas(datos, agrupar_por="sucursal", orden="asc", n=30, mes="2026-03")
+    r = _ok(s)
+    assert all(isinstance(g["es_nueva"], bool) for g in r["grupos"])
+    nuevas = set(datos.sucursales.loc[datos.sucursales["es_nueva"], "sucursal_id"])
+    for g in r["grupos"]:
+        assert g["es_nueva"] == (g["clave"] in nuevas)
+        assert ("dias_abierta" in g) == g["es_nueva"]
+    s015 = _ok(h.tasa_quejas(datos, agrupar_por="sucursal", sucursal_id="S015"))["grupos"][0]
+    assert s015 == {**s015, "clave": "S015", "es_nueva": True, "dias_abierta": 13}
+    assert any("ranking_sucursales" in a for a in s["advertencias"])
+
+
+# --- Fix B: periodo parcialmente fuera de rango (M9) -------------------------------------------
+
+def test_periodo_recortado_avisa(datos):
+    s = h.contar_quejas(datos, fecha_desde="2025-12-01")
+    assert "el periodo pedido empieza antes de los datos; uso desde 2026-01-05" in s["advertencias"]
+    assert s["periodo"]["desde"] == "2026-01-05"
+    s = h.pedidos(datos, fecha_desde="2026-03-01", fecha_hasta="2026-04-15")
+    assert "el periodo pedido termina después de los datos; uso hasta 2026-03-29" in s["advertencias"]
+    assert s["periodo"] == {"desde": "2026-03-01", "hasta": "2026-03-29"}
+    s = h.tasa_quejas(datos, fecha_desde="2026-02-01", fecha_hasta="2026-02-28")
+    assert not any("periodo pedido" in a for a in s["advertencias"])
+    # Totalmente fuera: sigue el aviso de sin datos, no el de recorte.
+    s = h.contar_quejas(datos, mes="2026-04")
+    assert not any("periodo pedido" in a for a in s["advertencias"])

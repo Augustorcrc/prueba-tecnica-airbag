@@ -10,8 +10,14 @@ from agente.datos import REGIONES, tasa_emparejada
 from agente.recomendaciones import (
     ACCIONES_POR_CATEGORIA,
     PREFIJO_PREVENTIVA,
+    _candidatos_visita,
     candidatos_visita,
 )
+
+
+def _todas(datos, **kw):
+    """Lista completa, sin el tope de 10 de la herramienta (solo para tests)."""
+    return _candidatos_visita(datos, n=200, n_maximo=None, **kw)
 
 
 def _ids(r):
@@ -80,7 +86,7 @@ def test_n_exacto(datos, n):
 
 
 def test_n_marca_preventivas(datos):
-    r = candidatos_visita(datos, n=30)
+    r = _todas(datos)
     for c in r["resultado"]["candidatos"]:
         assert c["preventiva"] == (c["ratio_regional"] < 1.5)
     assert any(c["preventiva"] for c in r["resultado"]["candidatos"])
@@ -88,9 +94,9 @@ def test_n_marca_preventivas(datos):
 
 def test_nuevas(datos):
     nuevas = set(datos.sucursales.loc[datos.sucursales["es_nueva"], "sucursal_id"])
-    todas = candidatos_visita(datos, n=200)
+    todas = _todas(datos)
     assert not (set(_ids(todas)) & nuevas)
-    con = candidatos_visita(datos, n=200, incluir_nuevas=True)
+    con = _todas(datos, incluir_nuevas=True)
     entradas = [c for c in con["resultado"]["candidatos"] if c["sucursal_id"] in nuevas]
     assert entradas
     assert all(any(a.startswith("abrió el ") and "poco confiable" in a for a in c["advertencias"])
@@ -98,7 +104,7 @@ def test_nuevas(datos):
 
 
 def test_tendencias_y_seguimiento(datos):
-    r = candidatos_visita(datos, n=200)
+    r = _todas(datos)
     por_id = {c["sucursal_id"]: c for c in r["resultado"]["candidatos"]}
     for sid in ("S012", "S067", "S107"):
         assert por_id[sid]["tendencia"]["etiqueta"] == "baja"
@@ -151,3 +157,51 @@ def test_tasa_emparejada_s035(datos):
     d = datos.diario_sucursal
     t = tasa_emparejada(d[d["sucursal_id"] == "S035"])["tasa"]
     assert round(t, 3) == 1.393
+
+
+# --- Fix B: categoría (I4) y tope/tamaño (M5) ---------------------------------------------------
+
+def test_categoria_define_la_accion(datos):
+    r = candidatos_visita(datos, categoria="limpieza")
+    cands = r["resultado"]["candidatos"]
+    assert cands
+    base = ACCIONES_POR_CATEGORIA["limpieza"]
+    for c in cands:
+        accion = c["accion_sugerida_base"]
+        assert "demora" not in accion.lower() and "dotación" not in accion
+        assert accion == base or accion.startswith(f"seguimiento: {base};")
+        assert "categoria_dominante" in c  # queda como dato extra
+    # S024 tiene "demora" como dominante pero la acción es la de limpieza.
+    assert any(c["categoria_dominante"] != "limpieza" for c in cands)
+
+
+def test_categoria_informa_quejas_y_pct(datos):
+    r = candidatos_visita(datos, categoria="limpieza")
+    d = datos.diario_sucursal
+    for c in r["resultado"]["candidatos"]:
+        sub = d[(d["sucursal_id"] == c["sucursal_id"]) & (d["fecha"] >= "2026-03-02") & (d["fecha"] <= "2026-03-29")]
+        q_cat, q_tot = int(sub["quejas_limpieza"].sum()), int(sub["quejas"].sum())
+        assert c["quejas_categoria_4sem"] == q_cat
+        assert c["pct_categoria_4sem"] == round(100 * q_cat / q_tot, 1)
+    # Sin categoría no aparecen.
+    assert "pct_categoria_4sem" not in candidatos_visita(datos)["resultado"]["candidatos"][0]
+
+
+def test_n_tope_10(datos):
+    r = candidatos_visita(datos, n=30)
+    assert len(r["resultado"]["candidatos"]) == 10
+    assert any("se limitó a 10" in a for a in r["advertencias"])
+    assert _ids(r) == _ids(_todas(datos))[:10]
+
+
+@pytest.mark.parametrize("kwargs, limite", [
+    ({"n": 5}, 4096), ({"n": 5, "categoria": "limpieza"}, 4096),
+    ({"n": 5, "categoria": "demora", "incluir_nuevas": True}, 4096),
+    ({"n": 10}, 8192), ({"n": 10, "categoria": "trato", "incluir_nuevas": True}, 8192),
+])
+def test_tamano_con_recorte_de_campos(datos, kwargs, limite):
+    r = candidatos_visita(datos, **kwargs)
+    assert len(json.dumps(r)) < limite
+    assert len(r["resultado"]["candidatos"]) == kwargs["n"]  # se recortan campos, no ítems
+    for c in r["resultado"]["candidatos"]:
+        assert {"sucursal_id", "ratio_regional", "accion_sugerida_base"} <= set(c)
