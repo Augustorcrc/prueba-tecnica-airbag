@@ -1,0 +1,6 @@
+{"id": "A01", "pregunta": "¿Cuántos pedidos atendió la región Costa en todo el periodo?", "respuesta_esperada": 691516, "tipo": "numero", "tolerancia": 0}
+{"id": "A02", "pregunta": "¿Qué sucursal tuvo más pedidos en la semana del 5 de enero de 2026?", "respuesta_esperada": "S052", "tipo": "texto", "tolerancia": null}
+{"id": "A03", "pregunta": "¿Qué día de la semana se atienden más pedidos en promedio?", "respuesta_esperada": "sábado", "tipo": "texto", "tolerancia": null}
+{"id": "A04", "pregunta": "¿Cuáles son las 3 sucursales con peor tasa de quejas en todo el periodo, entre las que operaron todo el periodo?", "respuesta_esperada": ["S034", "S107", "S012"], "tipo": "lista", "tolerancia": 0}
+{"id": "A05", "pregunta": "¿La capacitación redujo las quejas? ¿En cuántas quejas por cada 1,000 pedidos?", "respuesta_esperada": -0.29, "tipo": "numero", "tolerancia": 0.05}
+{"id": "A06", "pregunta": "¿Cuántas quejas se registraron en total?", "respuesta_esperada": 6646, "tipo": "numero", "tolerancia": 0}
