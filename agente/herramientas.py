@@ -317,9 +317,11 @@ class _Filtros:
                 self.desde, self.hasta = self.hasta, self.desde
         self._crudos = {"fecha_desde": desde, "fecha_hasta": hasta}
         self.advertencias: list[str] = []
-        if not self.vacio and inicios and max(inicios) < INICIO:
+        # Solo para fechas explícitas: "marzo de 2026" llega al 31 pero los datos terminan el 29, y ese
+        # recorte es esperable (no hace falta avisarlo en cada consulta del mes).
+        if not self.vacio and desde is not None and max(inicios) < INICIO:
             self.advertencias.append(f"el periodo pedido empieza antes de los datos; uso desde {INICIO:%Y-%m-%d}")
-        if not self.vacio and finales and min(finales) > FIN:
+        if not self.vacio and hasta is not None and min(finales) > FIN:
             self.advertencias.append(f"el periodo pedido termina después de los datos; uso hasta {FIN:%Y-%m-%d}")
         if self.ciudad:
             info = datos.sucursales.set_index("sucursal_id")
