@@ -1,0 +1,39 @@
+[project]
+name = "agente-cafe-tostadero"
+version = "0.1.0"
+description = "Asistente en español para el gerente regional de Café Tostadero (prueba técnica Airbag)"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "langgraph>=1,<2",
+    "langchain-core>=1,<2",
+    "langchain>=1,<2",
+    "langchain-anthropic>=1,<2",
+    "duckdb>=1.1",
+    "pandas>=2.2",
+    "pydantic>=2.7",
+    "python-dotenv>=1.0",
+    "sqlglot>=25",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "ruff>=0.6",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q"
+markers = [
+    "requiere_clave: necesita ANTHROPIC_API_KEY y red (se saltea si falta)",
+]
+
+[tool.ruff]
+line-length = 110
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["E501"]

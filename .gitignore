@@ -221,3 +221,11 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Entorno local de desarrollo
+.wheels/
+.venv-vm/
+.worktrees/
+reportes/trazas/
+.DS_Store
+data_raw/

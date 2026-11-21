@@ -1,0 +1,16 @@
+name: tests
+
+on: [push, pull_request]
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - run: uv python install 3.11
+      - run: uv sync
+      - name: Tests offline (sin clave)
+        run: uv run python -m pytest
+        env:
+          ANTHROPIC_API_KEY: ""
