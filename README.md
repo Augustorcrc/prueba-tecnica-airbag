@@ -7,7 +7,7 @@ quejas, sucursales y capacitaciones, y recomienda qué sucursales visitar. Prueb
 ## Cómo correrlo
 
 ```bash
-uv sync                                   # instala dependencias (Python >= 3.11)
+uv sync                                   # crea .venv e instala dependencias (Python >= 3.11)
 cp .env.example .env                      # y completo ANTHROPIC_API_KEY
 make test                                 # tests offline, no necesitan clave ni red
 make ask Q="¿Cuántas quejas hubo en total?"
@@ -138,8 +138,11 @@ Fórmula: `costo = tokens_entrada × precio_entrada + tokens_salida × precio_sa
 | Claude Sonnet 5.5 (agente) | 2,00 | 10,00 |
 | Claude Haiku 5.5 (juez, prompts < 100k) | 0,10 | 0,50 |
 
-Estimación previa, sin medir: ~10–15k tokens de entrada por pregunta (3–5 pasos) → ~USD 0,03–0,05 por
-pregunta. Latencia: `TODO(costo/latencia)`.
+Estimación previa, sin medir: cada llamada al modelo manda ~5.900 tokens fijos (system prompt ~1.250,
+schemas de las 10 herramientas ~4.200, `RespuestaFinal` ~450) más el historial de la pregunta. Con 3–5
+llamadas por pregunta son ~20–35k tokens de entrada y ~1k de salida → **~USD 0,05–0,08 por pregunta**.
+Latencia: `TODO(costo/latencia)`. Cada corrida deja su traza (herramientas, argumentos, tokens, costo,
+latencia, verificación) en `reportes/trazas/AAAAMMDD.jsonl`.
 
 ## Cómo funciona el eval
 
@@ -153,6 +156,8 @@ pregunta. Si falta o no sirve, un parser lee el texto:
 clave (números, fechas ISO, IDs, palabras de 4+ letras). Si la esperada es larga o no matchea, la decide
 un LLM juez (Haiku 5.5, temperatura 0) con una rúbrica cerrada: ¿contiene los hechos esperados?
 ¿contradice alguno? Con `--sin-juez` esas corridas fallan con motivo "requiere juez".
+Si la esperada es "no hay datos" (preguntas adversariales), la corrida pasa solo si el texto lo dice
+explícitamente y `valor` está vacío: un número en la respuesta cuenta como inventado.
 
 **Preguntas propias** (`eval/preguntas_propias.jsonl`): cada una tiene una trampa de los datos.
 
@@ -164,6 +169,11 @@ un LLM juez (Haiku 5.5, temperatura 0) con una rúbrica cerrada: ¿contiene los 
 | A04 | Top 3 de peor tasa entre las que operaron todo el periodo | Duplicados + sucursales nuevas |
 | A05 | Efecto de la capacitación | Sesgo de selección: solo el Norte es causal |
 | A06 | Total de quejas | Duplicados |
+
+Además, `eval/preguntas_robustez.jsonl` (`make eval-robustez`) tiene 34 preguntas: 2–3 paráfrasis por
+cada pregunta de ejemplo y adversariales (sucursal S121, región "Oeste", abril de 2026, ventas en pesos,
+empleados, "esta semana", "la semana pasada", peor sucursal por tasa, total de pedidos). Todas las
+esperadas salen del oráculo.
 
 ## Estado y pendientes
 
@@ -186,7 +196,7 @@ un LLM juez (Haiku 5.5, temperatura 0) con una rúbrica cerrada: ¿contiene los 
 
 ```
 agente/        capa de datos, herramientas, SQL seguro, grafo, nodos, prompts, verificador, recomendaciones
-datos/         CSV de entrada
+datos/         CSV de entrada (copia de los provistos por Airbag)
 eval/          evaluar.py, comparadores, juez, preguntas de ejemplo y propias
 oraculo/       recálculo independiente de las respuestas esperadas (pandas puro)
 spikes/        spike de LangGraph + resultado
@@ -199,7 +209,7 @@ main.py        CLI
 
 ```bash
 make test                          # usa uv run python
-make test PY=.venv-vm/bin/python   # con otro intérprete
+make test PY=python                # con otro intérprete (por ejemplo, un venv ya activado)
 ```
 
 Corren offline: no necesitan clave ni red (los marcados `requiere_clave` se saltean si falta la clave).
