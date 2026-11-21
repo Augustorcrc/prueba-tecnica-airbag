@@ -46,7 +46,10 @@ def _modelo_juez_cacheado(nombre: str):
     """Modelo juez con salida estructurada (cacheado por nombre)."""
     from langchain.chat_models import init_chat_model
 
-    return init_chat_model(nombre, temperature=0).with_structured_output(Veredicto, include_raw=True)
+    from agente.config import kwargs_modelo
+
+    # temperature=0 salvo en modelos que no la aceptan (p. ej. si MODELO_JUEZ apunta a Sonnet 5.5).
+    return init_chat_model(nombre, **kwargs_modelo(nombre)).with_structured_output(Veredicto, include_raw=True)
 
 
 def obtener_juez():
