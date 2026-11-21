@@ -1,0 +1,153 @@
+"""Tests del score determinístico de recomendaciones (contrato C7, parte sin LLM)."""
+
+import dataclasses
+import json
+from datetime import date
+
+import pytest
+
+from agente.datos import REGIONES, tasa_emparejada
+from agente.recomendaciones import (
+    ACCIONES_POR_CATEGORIA,
+    PREFIJO_PREVENTIVA,
+    candidatos_visita,
+)
+
+
+def _ids(r):
+    return [c["sucursal_id"] for c in r["resultado"]["candidatos"]]
+
+
+def _tam(r):
+    return len(json.dumps(r, ensure_ascii=False).encode("utf-8"))
+
+
+def test_default_cadena(datos):
+    r = candidatos_visita(datos)
+    assert _ids(r) == ["S112", "S012", "S067", "S056", "S024"]
+    ratios = [c["ratio_regional"] for c in r["resultado"]["candidatos"]]
+    assert ratios == pytest.approx([2.29, 2.07, 2.04, 1.98, 1.98], abs=0.01)
+    assert all(c["supera_umbral"] and not c["preventiva"] for c in r["resultado"]["candidatos"])
+    assert r["periodo"] == {"desde": "2026-03-02", "hasta": "2026-03-29"}
+    p = r["resultado"]["parametros"]
+    assert p["umbral_ratio"] == 1.5 and p["n_supera_umbral"] >= 5 and p["n_elegibles"] > 0
+    assert p["ventana_anterior"] == "2026-02-02..2026-03-01"
+    assert r["n_registros"] == 5
+
+
+def test_componentes_consistentes(datos):
+    c = candidatos_visita(datos)["resultado"]["candidatos"][0]
+    claves = {"sucursal_id", "nombre", "region", "ciudad", "tasa_4sem", "tasa_region_4sem",
+              "ratio_regional", "quejas_4sem", "pedidos_4sem", "tasa_4sem_anterior", "tendencia",
+              "categoria_dominante", "pct_categoria_dominante", "capacitada", "fecha_capacitacion",
+              "metodo_asignacion", "supera_umbral", "preventiva", "accion_sugerida_base", "advertencias"}
+    assert claves <= set(c)
+    assert c["tasa_4sem"] == pytest.approx(c["quejas_4sem"] / c["pedidos_4sem"] * 1000, abs=0.01)
+    assert c["ratio_regional"] == pytest.approx(c["tasa_4sem"] / c["tasa_region_4sem"], abs=0.01)
+    assert c["categoria_dominante"] in ACCIONES_POR_CATEGORIA
+
+
+def test_region_costa(datos):
+    r = candidatos_visita(datos, region="Costa")
+    cands = r["resultado"]["candidatos"]
+    assert 3 <= len(cands) <= 5
+    assert all(c["region"] == "Costa" for c in cands)
+
+
+def test_menos_de_tres_sobre_umbral_completa_con_preventivas(datos):
+    # Datos manipulados: en Costa todas las sucursales tienen la misma tasa salvo S096 (triple).
+    diario = datos.diario_sucursal.copy()
+    costa = diario["region"] == "Costa"
+    base = (diario.loc[costa, "pedidos_validos"].fillna(0).astype("int64") // 100)
+    diario.loc[costa, "quejas"] = base
+    diario.loc[costa & (diario["sucursal_id"] == "S096"), "quejas"] = base * 3
+    manipulado = dataclasses.replace(datos, diario_sucursal=diario)
+    r = candidatos_visita(manipulado, region="Costa")
+    cands = r["resultado"]["candidatos"]
+    assert len(cands) == 3
+    assert cands[0]["sucursal_id"] == "S096" and cands[0]["preventiva"] is False
+    assert all(c["preventiva"] and not c["supera_umbral"] for c in cands[1:])
+    assert r["resultado"]["parametros"]["n_supera_umbral"] == 1
+    assert any(PREFIJO_PREVENTIVA in a for a in r["advertencias"])
+    assert PREFIJO_PREVENTIVA.startswith("Atención preventiva: no supera el umbral, pero")
+
+
+@pytest.mark.parametrize("n", [2, 7])
+def test_n_exacto(datos, n):
+    r = candidatos_visita(datos, n=n)
+    assert len(r["resultado"]["candidatos"]) == n
+    assert _ids(r)[:min(n, 5)] == ["S112", "S012", "S067", "S056", "S024"][:n]
+
+
+def test_n_marca_preventivas(datos):
+    r = candidatos_visita(datos, n=30)
+    for c in r["resultado"]["candidatos"]:
+        assert c["preventiva"] == (c["ratio_regional"] < 1.5)
+    assert any(c["preventiva"] for c in r["resultado"]["candidatos"])
+
+
+def test_nuevas(datos):
+    nuevas = set(datos.sucursales.loc[datos.sucursales["es_nueva"], "sucursal_id"])
+    todas = candidatos_visita(datos, n=200)
+    assert not (set(_ids(todas)) & nuevas)
+    con = candidatos_visita(datos, n=200, incluir_nuevas=True)
+    entradas = [c for c in con["resultado"]["candidatos"] if c["sucursal_id"] in nuevas]
+    assert entradas
+    assert all(any(a.startswith("abrió el ") and "poco confiable" in a for a in c["advertencias"])
+               for c in entradas)
+
+
+def test_tendencias_y_seguimiento(datos):
+    r = candidatos_visita(datos, n=200)
+    por_id = {c["sucursal_id"]: c for c in r["resultado"]["candidatos"]}
+    for sid in ("S012", "S067", "S107"):
+        assert por_id[sid]["tendencia"]["etiqueta"] == "baja"
+    s012 = por_id["S012"]
+    assert s012["capacitada"] is True
+    accion = s012["accion_sugerida_base"].lower()
+    assert accion.startswith("seguimiento") and "capacitar" not in accion
+    assert s012["fecha_capacitacion"] in accion
+
+
+def test_categoria_usa_solo_esa_categoria(datos):
+    r = candidatos_visita(datos, categoria="limpieza")
+    c = r["resultado"]["candidatos"][0]
+    sub = datos.diario_sucursal
+    sub = sub[(sub["sucursal_id"] == c["sucursal_id"]) & (sub["fecha"] >= "2026-03-02")
+              & (sub["fecha"] <= "2026-03-29") & ~sub["dato_invalido"].astype(bool)]
+    assert c["quejas_4sem"] == int(sub["quejas_limpieza"].sum())
+    assert r["filtros_aplicados"]["categoria"] == "limpieza"
+
+
+def test_fecha_hasta_string_y_date(datos):
+    a = candidatos_visita(datos, fecha_hasta="2026-03-29")
+    b = candidatos_visita(datos, fecha_hasta=date(2026, 3, 29))
+    assert _ids(a) == _ids(b) == _ids(candidatos_visita(datos))
+
+
+@pytest.mark.parametrize("kwargs", [
+    {"region": "Atlántida"}, {"categoria": "ruido"}, {"n": 0}, {"n": -3},
+    {"fecha_hasta": "2025-12-31"}, {"fecha_hasta": "2026-04-01"}, {"fecha_hasta": "no-fecha"},
+])
+def test_errores(datos, kwargs):
+    r = candidatos_visita(datos, **kwargs)
+    assert "error" in r and isinstance(r["valores_validos"], list) and r["valores_validos"]
+    json.dumps(r)
+
+
+def test_region_inexistente_valores_validos(datos):
+    r = candidatos_visita(datos, region="Atlántida")
+    assert r["valores_validos"] == list(REGIONES)
+
+
+def test_serializable_y_tamano(datos):
+    for kwargs in ({}, {"region": "Costa"}, {"categoria": "demora"}, {"incluir_nuevas": True}):
+        r = candidatos_visita(datos, **kwargs)
+        assert json.loads(json.dumps(r, ensure_ascii=False)) == r
+        assert _tam(r) < 4096
+
+
+def test_tasa_emparejada_s035(datos):
+    d = datos.diario_sucursal
+    t = tasa_emparejada(d[d["sucursal_id"] == "S035"])["tasa"]
+    assert round(t, 3) == 1.393
