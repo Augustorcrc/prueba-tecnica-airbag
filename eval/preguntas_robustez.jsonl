@@ -1,0 +1,34 @@
+{"id": "R01a", "pregunta": "¿cuántas sucursales hay en Costa?", "respuesta_esperada": 30, "tipo": "numero", "tolerancia": 0}
+{"id": "R01b", "pregunta": "Sucursales de la costa: ¿cuántas son?", "respuesta_esperada": 30, "tipo": "numero", "tolerancia": 0}
+{"id": "R01v", "pregunta": "¿Cuántos locales tenemos en total entre todas las regiones?", "respuesta_esperada": 120, "tipo": "numero", "tolerancia": 0}
+{"id": "R02a", "pregunta": "¿Cuántas quejas tuvo el Sur en 2026-02?", "respuesta_esperada": 442, "tipo": "numero", "tolerancia": 0}
+{"id": "R02b", "pregunta": "Necesito el número de reclamos de la region sur durante febrero.", "respuesta_esperada": 442, "tipo": "numero", "tolerancia": 0}
+{"id": "R02v", "pregunta": "¿Y cuántas quejas recibió la región Sur en marzo de 2026?", "respuesta_esperada": 463, "tipo": "numero", "tolerancia": 0}
+{"id": "R03a", "pregunta": "¿Qué tasa de quejas cada 1.000 pedidos tuvo Centro en todo el período?", "respuesta_esperada": 2.15, "tipo": "numero", "tolerancia": 0.01}
+{"id": "R03b", "pregunta": "En la región CENTRO, ¿cuántas quejas hubo por cada mil pedidos considerando todo el periodo?", "respuesta_esperada": 2.15, "tipo": "numero", "tolerancia": 0.01}
+{"id": "R03v", "pregunta": "¿Cuál es la tasa de quejas por cada 1,000 pedidos de la región Costa en todo el periodo?", "respuesta_esperada": 2.27, "tipo": "numero", "tolerancia": 0.01}
+{"id": "R04a", "pregunta": "¿De qué se quejan más los clientes en el norte? Dame la categoría.", "respuesta_esperada": "demora", "tipo": "texto", "tolerancia": null}
+{"id": "R04b", "pregunta": "region norte: categoria de queja mas frecuente", "respuesta_esperada": "demora", "tipo": "texto", "tolerancia": null}
+{"id": "R04v", "pregunta": "¿Cuál es la categoría de queja más común en la sucursal S104?", "respuesta_esperada": "limpieza", "tipo": "texto", "tolerancia": null}
+{"id": "R05a", "pregunta": "¿Cuántos locales pasaron por la capacitación y cuándo fue?", "respuesta_esperada": "36 sucursales, el 2026-02-09", "tipo": "texto", "tolerancia": null}
+{"id": "R05b", "pregunta": "Sobre la capacitación: ¿qué fecha se hizo y a cuántas sucursales llegó?", "respuesta_esperada": "36 sucursales, el 2026-02-09", "tipo": "texto", "tolerancia": null}
+{"id": "R06a", "pregunta": "Top 3 de sucursales con peor tasa de quejas cada 1.000 pedidos en febrero.", "respuesta_esperada": ["S012", "S107", "S067"], "tipo": "lista", "tolerancia": 0}
+{"id": "R06b", "pregunta": "¿Qué tres sucursales tuvieron la tasa de quejas por mil pedidos más alta en 2026-02?", "respuesta_esperada": ["S012", "S107", "S067"], "tipo": "lista", "tolerancia": 0}
+{"id": "R06v", "pregunta": "¿Cuáles son las 3 sucursales con más quejas por cada 1,000 pedidos en marzo de 2026?", "respuesta_esperada": ["S024", "S056", "S112"], "tipo": "lista", "tolerancia": 0}
+{"id": "R07a", "pregunta": "En la semana que arranca el lunes 2026-03-02, ¿qué sucursal vendió más pedidos?", "respuesta_esperada": "S052", "tipo": "texto", "tolerancia": null}
+{"id": "R07b", "pregunta": "¿cuál fue la sucursal con mayor cantidad de pedidos la semana del 2 al 8 de marzo?", "respuesta_esperada": "S052", "tipo": "texto", "tolerancia": null}
+{"id": "R07v", "pregunta": "¿Qué sucursal tuvo más pedidos en la semana del 9 de marzo de 2026?", "respuesta_esperada": "S031", "tipo": "texto", "tolerancia": null}
+{"id": "R08a", "pregunta": "¿Cuál es el canal más usado para presentar quejas?", "respuesta_esperada": "app", "tipo": "texto", "tolerancia": null}
+{"id": "R08b", "pregunta": "Las quejas, ¿llegan más por teléfono, redes, tienda o app? ¿Cuál es el principal?", "respuesta_esperada": "app", "tipo": "texto", "tolerancia": null}
+{"id": "R08v", "pregunta": "En marzo, ¿por qué canal llegaron más quejas en la región Sur?", "respuesta_esperada": "app", "tipo": "texto", "tolerancia": null}
+{"id": "R09a", "pregunta": "¿Cuántas sucursales nuevas se inauguraron en el periodo analizado?", "respuesta_esperada": 6, "tipo": "numero", "tolerancia": 0}
+{"id": "R09b", "pregunta": "aperturas de sucursales entre enero y marzo de 2026: ¿cuántas hubo?", "respuesta_esperada": 6, "tipo": "numero", "tolerancia": 0}
+{"id": "X01", "pregunta": "¿Cuántas quejas tuvo la sucursal S121?", "respuesta_esperada": "no hay datos", "tipo": "texto", "tolerancia": null}
+{"id": "X02", "pregunta": "¿Cuál es la tasa de quejas de la región Oeste?", "respuesta_esperada": "no hay datos", "tipo": "texto", "tolerancia": null}
+{"id": "X03", "pregunta": "¿Cuántas quejas hubo en abril de 2026?", "respuesta_esperada": "no hay datos", "tipo": "texto", "tolerancia": null}
+{"id": "X04", "pregunta": "¿Cuánto facturó la región Centro en pesos en febrero?", "respuesta_esperada": "no hay datos", "tipo": "texto", "tolerancia": null}
+{"id": "X05", "pregunta": "¿Cuántos empleados tiene la sucursal S010?", "respuesta_esperada": "no hay datos", "tipo": "texto", "tolerancia": null}
+{"id": "X06", "pregunta": "¿Cuántas quejas hubo esta semana en el Norte?", "respuesta_esperada": 127, "tipo": "numero", "tolerancia": 0}
+{"id": "X07", "pregunta": "¿Cuántas quejas recibimos la semana pasada en todas las sucursales?", "respuesta_esperada": 559, "tipo": "numero", "tolerancia": 0}
+{"id": "X08", "pregunta": "¿Qué sucursal tiene la peor tasa de quejas?", "respuesta_esperada": "S034", "tipo": "texto", "tolerancia": null}
+{"id": "X09", "pregunta": "¿Cuántos pedidos hubo en total?", "respuesta_esperada": 3246856, "tipo": "numero", "tolerancia": 0}
