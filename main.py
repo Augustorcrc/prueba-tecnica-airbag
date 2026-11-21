@@ -22,7 +22,11 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     from agente.agente import responder
 
-    respuesta = responder(argv[0])
+    try:
+        respuesta = responder(argv[0])
+    except Exception as e:  # noqa: BLE001  (solo llegan acá los límites de tasa del proveedor)
+        print(f"Error del proveedor (límite de tasa): {e}. Probá de nuevo en unos segundos.", file=sys.stderr)
+        return 3
     # Para recomendaciones, `salida_para_usuario()` es SOLO el JSON.
     print(respuesta.salida_para_usuario())
     if mostrar_traza:

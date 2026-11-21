@@ -279,6 +279,12 @@ def guardar_traza(traza: dict) -> Path | None:
 # --------------------------------------------------------------------------- responder
 
 
+def es_rate_limit(error: BaseException) -> bool:
+    """True si el error es un límite de tasa del proveedor (429): ese error se propaga."""
+    texto = f"{type(error).__name__} {error}".lower()
+    return "ratelimit" in texto.replace("_", "") or "rate limit" in texto or "429" in texto
+
+
 def responder(
     pregunta: str, *, modelo: "BaseChatModel | None" = None, datos: "Datos | None" = None
 ) -> Respuesta:
@@ -317,6 +323,8 @@ def responder(
             advertencias=list(estado.get("advertencias") or []) + adv_alineacion,
         )
     except Exception as error:  # noqa: BLE001  (error del proveedor u otro: el eval sigue)
+        if es_rate_limit(error):
+            raise  # el eval reintenta con backoff; main.py lo informa
         respuesta = Respuesta(
             tipo_respuesta="dato",
             texto=f"No pude completar la consulta: {type(error).__name__}: {error}",

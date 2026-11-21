@@ -233,3 +233,27 @@ def test_preguntas_ejemplo_reales(indice):
     assert r.traza["error"] is None
     res = comparar(r, item, usar_juez=True)
     assert res.ok, (item["id"], res.motivo, r.texto, r.valor)
+
+
+def test_rate_limit_se_propaga_para_que_el_eval_reintente(monkeypatch, tmp_path):
+    """Agregado por el orquestador: un 429 no se convierte en respuesta, se propaga."""
+    import pytest
+
+    from agente import agente as ag
+
+    monkeypatch.setenv("TRAZAS_DIR", str(tmp_path))
+
+    class RateLimitError(Exception):
+        pass
+
+    class ModeloQueRateLimitea:
+        def bind_tools(self, *a, **k):
+            return self
+
+        def invoke(self, *a, **k):
+            raise RateLimitError("Error code: 429 - rate_limit_error")
+
+    assert ag.es_rate_limit(RateLimitError("429"))
+    assert not ag.es_rate_limit(ValueError("otra cosa"))
+    with pytest.raises(RateLimitError):
+        ag.responder("¿Cuántas sucursales tiene Costa?", modelo=ModeloQueRateLimitea())
