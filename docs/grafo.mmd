@@ -1,0 +1,33 @@
+---
+config:
+  flowchart:
+    curve: linear
+---
+graph TD;
+	__start__([<p>__start__</p>]):::first
+	modelo(modelo)
+	herramientas(herramientas)
+	recordatorio(recordatorio)
+	extraer_respuesta(extraer_respuesta)
+	verificar(verificar)
+	feedback(feedback)
+	cerrar_con_advertencia(cerrar_con_advertencia)
+	__end__([<p>__end__</p>]):::last
+	__start__ --> modelo;
+	extraer_respuesta -.-> cerrar_con_advertencia;
+	extraer_respuesta -.-> modelo;
+	extraer_respuesta -.-> verificar;
+	feedback --> modelo;
+	herramientas --> modelo;
+	modelo -.-> cerrar_con_advertencia;
+	modelo -.-> extraer_respuesta;
+	modelo -.-> herramientas;
+	modelo -.-> recordatorio;
+	recordatorio --> modelo;
+	verificar -. &nbsp;fin&nbsp; .-> __end__;
+	verificar -.-> cerrar_con_advertencia;
+	verificar -.-> feedback;
+	cerrar_con_advertencia --> __end__;
+	classDef default fill:#f2f0ff,line-height:1.2
+	classDef first fill-opacity:0
+	classDef last fill:#bfb6fc
