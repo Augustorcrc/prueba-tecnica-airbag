@@ -17,10 +17,10 @@ from agente.agente import (
     parametros_de_pregunta,
     responder,
 )
+from agente.config import MAX_PASOS
+from agente.esquemas import RespuestaFinal
 from agente.recomendaciones import PREFIJO_PREVENTIVA, candidatos_visita
 from agente.verificador import verificar_respuesta
-from agente.esquemas import RespuestaFinal
-from agente.config import MAX_PASOS
 from tests.fakes import ModeloFalso, ai, final, llamada
 
 SIN_CLAVE = not os.environ.get("ANTHROPIC_API_KEY", "").strip()
@@ -366,3 +366,21 @@ def test_dato_que_no_es_recomendacion_no_se_toca(datos):
     r = responder("¿cuál es la peor sucursal?", modelo=ModeloFalso(guion), datos=datos)
     assert r.tipo_respuesta == "dato" and r.texto.startswith("La peor es S112.")
     assert not any("determinística" in a for a in r.traza["advertencias"])
+
+
+def test_dato_con_candidatos_no_se_convierte_si_la_pregunta_no_pide_recomendaciones(datos):
+    """Agregado por el orquestador: mirar candidatos_visita no convierte un dato en JSON."""
+    from agente.agente import asegurar_recomendaciones
+    from agente.esquemas import RespuestaFinal
+    from agente.recomendaciones import candidatos_visita
+
+    estado = {"llamadas": [{"herramienta": "candidatos_visita", "args": {}, "resultado": candidatos_visita(datos)}]}
+    dato = RespuestaFinal(tipo_respuesta="dato", texto="La peor sucursal por tasa es S034.", valor="S034",
+                          tipo_valor="texto")
+    nueva, adv = asegurar_recomendaciones(dato, estado, "¿Cuál es la peor sucursal?", datos)
+    assert nueva.tipo_respuesta == "dato" and adv == []
+
+    corte = RespuestaFinal(tipo_respuesta="dato", texto="No pude completar la consulta con los datos disponibles.",
+                           tipo_valor="ninguno")
+    nueva, adv = asegurar_recomendaciones(corte, estado, "¿Cómo vengo?", datos)
+    assert nueva.tipo_respuesta == "recomendaciones" and adv

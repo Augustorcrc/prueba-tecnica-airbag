@@ -36,6 +36,8 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     # Para recomendaciones, `salida_para_usuario()` es SOLO el JSON.
     print(respuesta.salida_para_usuario())
+    if respuesta.traza.get("error"):  # error del proveedor: la salida sigue siendo válida, pero se avisa
+        print(f"Aviso: hubo un error del proveedor ({respuesta.traza['error']}).", file=sys.stderr)
     if mostrar_traza:
         print(json.dumps(respuesta.traza, ensure_ascii=False, indent=2, default=str), file=sys.stderr)
     return 0

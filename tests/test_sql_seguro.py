@@ -159,9 +159,9 @@ def test_columna_cruda_pedidos_no_existe(datos):
 def test_defensa_en_profundidad_conexion(datos):
     """Aunque se saltee la validación, la conexión no accede a archivos ni cambia la configuración."""
     con, _ = sql_seguro._conexion(datos)
-    with pytest.raises(Exception):
+    with pytest.raises(Exception):  # noqa: B017  (cualquier error de duckdb sirve)
         con.execute("SELECT * FROM read_csv('datos/quejas.csv')").fetchall()
-    with pytest.raises(Exception):
+    with pytest.raises(Exception):  # noqa: B017
         con.execute("SET enable_external_access = true")
     nombres = {r[0] for r in con.execute("SELECT table_name FROM information_schema.tables "
                                          "WHERE table_type = 'VIEW'").fetchall()}

@@ -31,8 +31,9 @@ import json
 import math
 import re
 import unicodedata
-from datetime import date, datetime, timedelta
-from typing import Any, Callable
+from collections.abc import Callable
+from datetime import date, datetime
+from typing import Any
 
 import pandas as pd
 
@@ -227,7 +228,7 @@ def _ciudad(datos: Datos, valor: Any) -> tuple[str | None, list[str]]:
         ciu = _elegir(valor, ciudades, "ciudad")
     except _ErrorHerramienta as e:
         raise _ErrorHerramienta(f"ciudad inexistente: {valor!r} (hay {len(ciudades)} ciudades)",
-                                _valores_acotados(e.valores_validos))
+                                _valores_acotados(e.valores_validos)) from None
     return ciu, sorted(s.loc[s["ciudad"] == ciu, "sucursal_id"])
 
 
@@ -242,7 +243,7 @@ def _fecha(valor: Any, nombre: str) -> pd.Timestamp | None:
         return pd.Timestamp(valor).normalize()
     except (ValueError, TypeError):
         raise _ErrorHerramienta(f"{nombre} inválida: {valor!r}; usá formato AAAA-MM-DD "
-                                "(los datos cubren 2026-01-05 a 2026-03-29)", ["2026-01-05", "2026-03-29"])
+                                "(los datos cubren 2026-01-05 a 2026-03-29)", ["2026-01-05", "2026-03-29"]) from None
 
 
 def _mes(valor: Any) -> tuple[pd.Timestamp, pd.Timestamp] | None:
@@ -275,7 +276,7 @@ def _entero(valor: Any, nombre: str, defecto: int, maximo: int = N_MAX) -> tuple
         if isinstance(valor, float) and not float(valor).is_integer():
             raise ValueError
     except (TypeError, ValueError):
-        raise _ErrorHerramienta(f"{nombre} debe ser un entero positivo: {valor!r}", [1, maximo])
+        raise _ErrorHerramienta(f"{nombre} debe ser un entero positivo: {valor!r}", [1, maximo]) from None
     if n < 1:
         raise _ErrorHerramienta(f"{nombre} debe ser un entero positivo: {valor!r}", [1, maximo])
     if n > maximo:

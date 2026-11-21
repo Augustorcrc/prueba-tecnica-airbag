@@ -213,7 +213,6 @@ def _candidatos_visita(
     elegibles = suc.loc[mascara]
 
     tasas_region = {r: _tasa(ventana.loc[ventana["region"] == r], categoria)["tasa"] for r in REGIONES}
-    cols_cat = [f"quejas_{c}" for c in CATEGORIAS]
     v_por_suc = dict(tuple(ventana.groupby("sucursal_id")))
     a_por_suc = dict(tuple(anterior.groupby("sucursal_id")))
     vacio = ventana.iloc[0:0]

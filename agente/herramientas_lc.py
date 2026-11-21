@@ -18,15 +18,14 @@ from __future__ import annotations
 import inspect
 import re
 import unicodedata
-from typing import Any, Callable, Literal, Optional, Union
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any, Literal, Optional, Union
 
 from langchain_core.tools import BaseTool, StructuredTool
 from pydantic import BaseModel, Field
 
 from agente.datos import CANALES, CATEGORIAS, REGIONES
 from agente.herramientas import HERRAMIENTAS
-
-from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # pragma: no cover
     from agente.datos import Datos

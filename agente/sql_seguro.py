@@ -154,7 +154,7 @@ def _validar(sql: str) -> str:
     try:
         sentencias = [s for s in sqlglot.parse(sql, read="duckdb") if s is not None]
     except Exception as error:  # sqlglot.errors.ParseError y afines
-        raise _Rechazo(f"No se pudo interpretar el SQL: {str(error)[:300]}")
+        raise _Rechazo(f"No se pudo interpretar el SQL: {str(error)[:300]}") from None
     if len(sentencias) != 1:
         raise _Rechazo("Se permite una única sentencia SQL.")
     arbol = sentencias[0]

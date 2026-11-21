@@ -232,8 +232,8 @@ def test_datos_cacheados(monkeypatch, datos):
 
 
 def test_integracion_eval_p01_p09(datos):
-    from eval.evaluar import cargar_preguntas, correr_eval
     from agente.config import RAIZ
+    from eval.evaluar import cargar_preguntas, correr_eval
 
     preguntas = [p for p in cargar_preguntas(RAIZ / "eval" / "preguntas_ejemplo.jsonl") if p["id"] in ("P01", "P09")]
     assert len(preguntas) == 2
@@ -259,8 +259,8 @@ def test_integracion_eval_p01_p09(datos):
 
 
 def _preguntas_ejemplo():
-    from eval.evaluar import cargar_preguntas
     from agente.config import RAIZ
+    from eval.evaluar import cargar_preguntas
 
     return cargar_preguntas(RAIZ / "eval" / "preguntas_ejemplo.jsonl")
 

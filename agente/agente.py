@@ -21,8 +21,8 @@ import json
 import os
 import re
 import threading
-import unicodedata
 import time
+import unicodedata
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -407,10 +407,16 @@ def asegurar_recomendaciones(
     pregunta pide recomendaciones. Una respuesta de tipo dato a una pregunta que no es de recomendación
     y sin `candidatos_visita` no se toca.
     """
+    # Un dato ("¿cuál es la peor sucursal?") no se convierte en JSON solo porque el modelo haya mirado
+    # candidatos_visita: hace falta que la pregunta pida recomendaciones, o que el modelo no haya podido
+    # terminar (corte por pasos o error) después de consultar candidatos.
+    sin_terminar = respuesta.tipo_respuesta == "dato" and (
+        (respuesta.texto or "").startswith(("No pude completar la consulta",))
+    )
     corresponde = (
         respuesta.tipo_respuesta == "recomendaciones"
-        or ultima_llamada_candidatos(estado) is not None
         or es_pregunta_de_recomendacion(pregunta)
+        or (ultima_llamada_candidatos(estado) is not None and sin_terminar)
     )
     if not corresponde:
         return respuesta, []

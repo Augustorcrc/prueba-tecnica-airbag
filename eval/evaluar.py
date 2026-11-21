@@ -20,11 +20,12 @@ import math
 import re
 import sys
 import time
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 from threading import Lock
-from typing import Any, Callable, Optional
+from typing import Any, Optional
 
 from agente.esquemas import Respuesta
 from eval.comparadores import TIPOS_VALIDOS, comparar
