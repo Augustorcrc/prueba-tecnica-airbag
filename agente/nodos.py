@@ -223,10 +223,28 @@ def _cerrar_por_pasos(estado: Estado) -> dict:
     return {"respuesta": respuesta, "advertencias": list(estado.get("advertencias") or []) + [advertencia]}
 
 
+def _cifras_visibles(no_verificados: list) -> list[str]:
+    """Cifras a mostrar en el texto: las de `texto` (sin prefijo de origen); si no hay, las demás sin
+    el prefijo `valor: `. Sin duplicados (por valor numérico cuando se puede interpretar)."""
+    sin_prefijo = [str(c) for c in no_verificados if ": " not in str(c)]
+    candidatas = sin_prefijo or [str(c).split(": ", 1)[-1] for c in no_verificados]
+    vistas: set = set()
+    salida: list[str] = []
+    for c in candidatas:
+        try:
+            clave: object = float(c.replace(",", ".")) if c.count(",") + c.count(".") <= 1 else c
+        except ValueError:
+            clave = c
+        if clave not in vistas:
+            vistas.add(clave)
+            salida.append(c)
+    return salida
+
+
 def _cerrar_dato(estado: Estado) -> dict:
     respuesta: RespuestaFinal = estado["respuesta"]
     verificacion = estado["verificacion"]
-    lineas = [f"⚠️ No pude verificar la cifra {c} contra los datos" for c in verificacion["no_verificados"]]
+    lineas = [f"⚠️ No pude verificar la cifra {c} contra los datos" for c in _cifras_visibles(verificacion["no_verificados"])]
     lineas += [f"⚠️ No pude verificar el ID {i} contra los datos" for i in verificacion["ids_invalidos"]]
     lineas += [f"⚠️ El ID {i} aparece repetido" for i in verificacion["ids_repetidos"]]
     texto = "\n".join([t for t in [respuesta.texto] if t] + lineas)
