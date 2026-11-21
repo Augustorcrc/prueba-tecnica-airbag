@@ -5,11 +5,16 @@ Errores: {"error": "...", "valores_validos": [...]}, nunca excepciones hacia el 
 
 Reglas comunes a todas las herramientas
 ---------------------------------------
-- Filtros comunes (todos opcionales): `region`, `sucursal_id` (str o lista), `categoria`, `canal`,
-  `fecha_desde`, `fecha_hasta` (ISO "AAAA-MM-DD", inclusivas) y `mes` ("AAAA-MM"). Se validan y se
-  normalizan mayúsculas/tildes ("costa" -> "Costa", "teléfono" -> "telefono", "s12" -> "S012").
+- Filtros comunes (todos opcionales): `region`, `ciudad` (se resuelve a las sucursales de esa
+  ciudad), `sucursal_id` (str o lista), `categoria`, `canal`, `fecha_desde`, `fecha_hasta` (ISO
+  "AAAA-MM-DD", inclusivas) y `mes` ("AAAA-MM"). Se validan y se normalizan mayúsculas/tildes
+  ("costa" -> "Costa", "teléfono" -> "telefono", "s12" -> "S012", "cancun" -> "Cancún").
 - El periodo efectivo es la intersección de los filtros de fecha con los datos (2026-01-05 a
-  2026-03-29). Si queda vacío se devuelve un resultado vacío con advertencia, nunca un 0 mudo.
+  2026-03-29). Si queda vacío se devuelve un resultado vacío con advertencia, nunca un 0 mudo. Si
+  queda recortado (el pedido empieza antes o termina después de los datos) se avisa explícitamente.
+- Agrupaciones de `pedidos` y `tasa_quejas`: `orden` ∈ {desc, asc, cronologico} (por defecto
+  cronológico para mes/semana/fecha y desc para el resto). Si la lista de grupos se recorta, se
+  agregan `maximo` y `minimo` calculados sobre TODOS los grupos.
 - Tasas: SIEMPRE quejas por 1.000 pedidos como ratio de sumas emparejado
   (`agente.datos.tasa_emparejada`): se excluyen del numerador y del denominador los días-sucursal
   con dato de pedidos inválido, y se informa `quejas_excluidas` y `dias_excluidos`.
@@ -73,6 +78,8 @@ AGRUPACIONES_TASA = ("region", "sucursal", "mes", "semana", "dia_semana")
 AGREGACIONES_PEDIDOS = ("suma", "promedio_por_sucursal_dia", "promedio_diario_total")
 METRICAS_RANKING = ("quejas", "tasa", "pedidos")
 ORDENES = ("desc", "asc")
+ORDENES_GRUPOS = ("desc", "asc", "cronologico")
+MAX_BYTES_VALORES_VALIDOS = 3000  # tope de la lista de valores válidos en un error
 
 # Columna de los DataFrames para cada agrupación.
 _COLUMNA_GRUPO = {
@@ -198,6 +205,32 @@ def _ids_sucursal(datos: Datos, valor: Any) -> list[str] | None:
     return ids
 
 
+def _valores_acotados(valores: list) -> list:
+    """La lista entera si entra en MAX_BYTES_VALORES_VALIDOS; si no, las primeras y el total."""
+    if len(json.dumps(valores)) <= MAX_BYTES_VALORES_VALIDOS:
+        return list(valores)
+    out: list = []
+    for v in valores:
+        if len(json.dumps(out + [v])) > MAX_BYTES_VALORES_VALIDOS - 60:
+            break
+        out.append(v)
+    return out + [f"... ({len(valores)} en total)"]
+
+
+def _ciudad(datos: Datos, valor: Any) -> tuple[str | None, list[str]]:
+    """Resuelve una ciudad (sin distinguir mayúsculas/tildes) a sus sucursales."""
+    if valor is None or (isinstance(valor, str) and not valor.strip()):
+        return None, []
+    s = datos.sucursales
+    ciudades = sorted(s["ciudad"].unique())
+    try:
+        ciu = _elegir(valor, ciudades, "ciudad")
+    except _ErrorHerramienta as e:
+        raise _ErrorHerramienta(f"ciudad inexistente: {valor!r} (hay {len(ciudades)} ciudades)",
+                                _valores_acotados(e.valores_validos))
+    return ciu, sorted(s.loc[s["ciudad"] == ciu, "sucursal_id"])
+
+
 def _fecha(valor: Any, nombre: str) -> pd.Timestamp | None:
     if valor is None or (isinstance(valor, str) and not valor.strip()):
         return None
@@ -258,8 +291,9 @@ class _Filtros:
     """Filtros comunes validados más la ventana efectiva de fechas."""
 
     def __init__(self, datos: Datos, region=None, sucursal_id=None, categoria=None, canal=None,
-                 fecha_desde=None, fecha_hasta=None, mes=None):
+                 fecha_desde=None, fecha_hasta=None, mes=None, ciudad=None):
         self.region = _elegir(region, REGIONES, "region")
+        self.ciudad, self.ids_ciudad = _ciudad(datos, ciudad)
         self.sucursales = _ids_sucursal(datos, sucursal_id)
         self.categoria = _elegir(categoria, CATEGORIAS, "categoria")
         self.canal = _elegir(canal, CANALES, "canal", alias={"tienda": "en_tienda", "local": "en_tienda",
@@ -283,6 +317,20 @@ class _Filtros:
                 self.desde, self.hasta = self.hasta, self.desde
         self._crudos = {"fecha_desde": desde, "fecha_hasta": hasta}
         self.advertencias: list[str] = []
+        if not self.vacio and inicios and max(inicios) < INICIO:
+            self.advertencias.append(f"el periodo pedido empieza antes de los datos; uso desde {INICIO:%Y-%m-%d}")
+        if not self.vacio and finales and min(finales) > FIN:
+            self.advertencias.append(f"el periodo pedido termina después de los datos; uso hasta {FIN:%Y-%m-%d}")
+        if self.ciudad:
+            info = datos.sucursales.set_index("sucursal_id")
+            if self.region and (info.loc[self.ids_ciudad, "region"] != self.region).all():
+                self.advertencias.append(f"{self.ciudad} no pertenece a la región {self.region}: "
+                                         "el resultado queda vacío")
+            if self.sucursales:
+                ajenas = [s for s in self.sucursales if s not in self.ids_ciudad]
+                if ajenas:
+                    self.advertencias.append(f"{', '.join(ajenas)} no es/son de {self.ciudad}: "
+                                             "quedan fuera del resultado")
         if self.region and self.sucursales:
             region_de = datos.sucursales.set_index("sucursal_id")["region"]
             ajenas = [s for s in self.sucursales if region_de[s] != self.region]
@@ -291,7 +339,8 @@ class _Filtros:
                                          "quedan fuera del resultado")
 
     def aplicados(self) -> dict:
-        d = {"region": self.region, "sucursal_id": self.sucursales, "categoria": self.categoria,
+        d = {"region": self.region, "ciudad": self.ciudad, "sucursal_id": self.sucursales,
+             "categoria": self.categoria,
              "canal": self.canal, "mes": self.mes,
              "fecha_desde": self._crudos["fecha_desde"], "fecha_hasta": self._crudos["fecha_hasta"]}
         return {k: v for k, v in d.items() if v is not None}
@@ -306,6 +355,8 @@ class _Filtros:
             m &= df["region"] == self.region
         if self.sucursales:
             m &= df["sucursal_id"].isin(self.sucursales)
+        if self.ciudad:
+            m &= df["sucursal_id"].isin(self.ids_ciudad)
         if con_categoria_canal:
             if self.categoria:
                 m &= df["categoria"] == self.categoria
@@ -320,6 +371,8 @@ class _Filtros:
             m &= s["region"] == self.region
         if self.sucursales:
             m &= s["sucursal_id"].isin(self.sucursales)
+        if self.ciudad:
+            m &= s["sucursal_id"].isin(self.ids_ciudad)
         return s.loc[m]
 
     def advertencias_nuevas(self, datos: Datos) -> list[str]:
@@ -409,6 +462,12 @@ def _diario_para_tasa(datos: Datos, fil: _Filtros) -> pd.DataFrame:
     return diario.drop(columns="_n")
 
 
+def _aviso_orden(orden: str | None, agrupacion: str) -> list[str]:
+    if orden == "cronologico" and agrupacion not in _AGRUPACIONES_TEMPORALES + ("dia_semana",):
+        return [f"orden cronologico no aplica a agrupar_por={agrupacion}: se ordenó por clave"]
+    return []
+
+
 def _agrupacion(valor: Any, validas: tuple) -> str | None:
     return _elegir(valor, validas, "agrupar_por", alias=_ALIAS_GRUPO)
 
@@ -419,13 +478,57 @@ def _clave_grupo(serie: pd.Series) -> pd.Series:
     return serie.astype(str)
 
 
-def _ordenar_grupos(filas: list[dict], campo: str, agrupacion: str, desc_siempre: bool = False) -> list[dict]:
-    """Agrupaciones temporales: orden cronológico; el resto: valor desc con desempate por clave."""
-    if agrupacion in _AGRUPACIONES_TEMPORALES and not desc_siempre:
+def _orden_grupos(valor: Any) -> str | None:
+    return _elegir(valor, ORDENES_GRUPOS, "orden",
+                   alias={"cronologica": "cronologico", "temporal": "cronologico", "descendente": "desc",
+                          "ascendente": "asc", "mayor_a_menor": "desc", "menor_a_mayor": "asc"})
+
+
+def _ordenar_grupos(filas: list[dict], campo: str, agrupacion: str, desc_siempre: bool = False,
+                    orden: str | None = None) -> list[dict]:
+    """Ordena los grupos.
+
+    `orden=None`: agrupaciones temporales en orden cronológico; el resto (o `desc_siempre`) valor
+    desc. "desc"/"asc": por valor con desempate por clave y los grupos sin valor al final.
+    "cronologico": por clave (lunes a domingo para dia_semana; alfabético si no es temporal).
+    """
+    if orden is None:
+        orden = "cronologico" if agrupacion in _AGRUPACIONES_TEMPORALES and not desc_siempre else "desc"
+    if orden == "cronologico":
+        if agrupacion == "dia_semana":
+            return sorted(filas, key=lambda r: (DIAS_SEMANA.index(r["clave"]) if r["clave"] in DIAS_SEMANA
+                                                else len(DIAS_SEMANA), r["clave"]))
         return sorted(filas, key=lambda r: r["clave"])
     con = sorted([r for r in filas if r[campo] is not None], key=lambda r: r["clave"])
-    con = sorted(con, key=lambda r: r[campo], reverse=True)
+    con = sorted(con, key=lambda r: r[campo], reverse=(orden == "desc"))
     return con + sorted([r for r in filas if r[campo] is None], key=lambda r: r["clave"])
+
+
+def _extremos(filas: list[dict], campo: str) -> dict:
+    """`maximo` y `minimo` (clave y valor) sobre todos los grupos; desempate por clave."""
+    con = sorted([r for r in filas if r[campo] is not None], key=lambda r: r["clave"])
+    if not con:
+        return {}
+    mx = max(con, key=lambda r: r[campo])
+    mn = min(con, key=lambda r: r[campo])
+    return {"maximo": {"clave": mx["clave"], campo: mx[campo]},
+            "minimo": {"clave": mn["clave"], campo: mn[campo]}}
+
+
+def _agregar_grupos(res: dict, advert: list[str], agr: str, filas: list[dict], campo: str, n_: int) -> None:
+    """Carga `grupos` (recortado a n) y, si hubo recorte, `maximo`/`minimo` sobre todos."""
+    res.update({"agrupado_por": agr, "total_grupos": len(filas), "grupos": filas[:n_]})
+    if len(filas) > n_:
+        advert.append(f"se muestran {n_} de {len(filas)} grupos (`maximo` y `minimo` son sobre todos)")
+        res.update(_extremos(filas, campo))
+
+
+def _recortar_grupos(salida: dict, res: dict, filas: list[dict], campo: str) -> dict:
+    """`_recortar` de `grupos`; si el recorte por tamaño dejó grupos afuera, agrega los extremos."""
+    salida = _recortar(salida, res, "grupos", "grupos")
+    if len(res["grupos"]) < len(filas) and "maximo" not in res:
+        res.update(_extremos(filas, campo))
+    return salida
 
 
 # ---------------------------------------------------------------------------------------------
@@ -543,10 +646,10 @@ def buscar_sucursales(datos: Datos, region: str | None = None, ciudad: str | Non
 def contar_quejas(datos: Datos, region: str | None = None, sucursal_id: str | list[str] | None = None,
                   categoria: str | None = None, canal: str | None = None, fecha_desde: str | None = None,
                   fecha_hasta: str | None = None, mes: str | None = None, agrupar_por: str | None = None,
-                  n: int | None = None) -> dict:
+                  n: int | None = None, ciudad: str | None = None) -> dict:
     """Cuenta quejas (incluye TODAS, también las de días con pedidos inválidos).
 
-    Filtros: region, sucursal_id (uno o lista), categoria, canal, fecha_desde, fecha_hasta, mes.
+    Filtros: region, ciudad, sucursal_id (uno o lista), categoria, canal, fecha_desde, fecha_hasta, mes.
     agrupar_por ∈ {region, sucursal, categoria, canal, mes, semana, dia_semana, fecha}: devuelve
     `grupos` ordenados de mayor a menor (desempate por clave) con `quejas` y `porcentaje` del total;
     `n` limita los grupos listados (por defecto 20, máx. 30) y `total_grupos` dice cuántos hay.
@@ -554,7 +657,7 @@ def contar_quejas(datos: Datos, region: str | None = None, sucursal_id: str | li
     Para tasas (quejas por 1.000 pedidos) usá `tasa_quejas`, no este conteo.
     """
     fil = _filtros(datos, region=region, sucursal_id=sucursal_id, categoria=categoria, canal=canal,
-                   fecha_desde=fecha_desde, fecha_hasta=fecha_hasta, mes=mes)
+                   fecha_desde=fecha_desde, fecha_hasta=fecha_hasta, mes=mes, ciudad=ciudad)
     agr = _agrupacion(agrupar_por, AGRUPACIONES_QUEJAS)
     n_, advert = _entero(n, "n", N_GRUPOS_DEFAULT)
     advert = fil.advertencias + advert
@@ -584,10 +687,11 @@ def contar_quejas(datos: Datos, region: str | None = None, sucursal_id: str | li
 @_herramienta
 def pedidos(datos: Datos, region: str | None = None, sucursal_id: str | list[str] | None = None,
             fecha_desde: str | None = None, fecha_hasta: str | None = None, mes: str | None = None,
-            agrupar_por: str | None = None, agregacion: str = "suma", n: int | None = None) -> dict:
+            agrupar_por: str | None = None, agregacion: str = "suma", n: int | None = None,
+            orden: str | None = None, ciudad: str | None = None) -> dict:
     """Pedidos válidos (se excluyen los días-sucursal con dato inválido; se informan en `dias_excluidos`).
 
-    Filtros: region, sucursal_id, fecha_desde, fecha_hasta, mes (no hay categoría ni canal).
+    Filtros: region, ciudad, sucursal_id, fecha_desde, fecha_hasta, mes (no hay categoría ni canal).
     agregacion:
       - "suma": total de pedidos válidos.
       - "promedio_por_sucursal_dia": promedio de pedidos de un día de una sucursal (media de las
@@ -598,11 +702,15 @@ def pedidos(datos: Datos, region: str | None = None, sucursal_id: str | list[str
     agrupar_por ∈ {region, sucursal, mes, semana, dia_semana, fecha}: `grupos` con `pedidos`; por
     region/sucursal/dia_semana ordenados de mayor a menor, por mes/semana/fecha en orden cronológico
     (semana = lunes de la semana). `n` limita los grupos (defecto 20, máx. 30).
+    orden ∈ {desc, asc, cronologico} cambia ese orden ("¿qué día hubo más pedidos?" ->
+    agrupar_por="fecha", orden="desc", n=1). Si los grupos se recortan, `maximo` y `minimo` son
+    sobre todos los grupos.
     Para el top de sucursales por pedidos usá `ranking_sucursales(metrica="pedidos")`.
     """
     fil = _filtros(datos, region=region, sucursal_id=sucursal_id, fecha_desde=fecha_desde,
-                   fecha_hasta=fecha_hasta, mes=mes)
+                   fecha_hasta=fecha_hasta, mes=mes, ciudad=ciudad)
     agr = _agrupacion(agrupar_por, AGRUPACIONES_PEDIDOS)
+    ord_ = _orden_grupos(orden)
     agg = _elegir(agregacion if agregacion is not None else "suma", AGREGACIONES_PEDIDOS, "agregacion")
     n_, advert = _entero(n, "n", N_GRUPOS_DEFAULT)
     advert = fil.advertencias + advert
@@ -629,10 +737,9 @@ def pedidos(datos: Datos, region: str | None = None, sucursal_id: str | list[str
     if agr:
         claves = _clave_grupo(validas[_COLUMNA_GRUPO[agr]])
         filas = [{"clave": k, "pedidos": agregar(g)} for k, g in validas.groupby(claves)]
-        filas = _ordenar_grupos(filas, "pedidos", agr)
-        res.update({"agrupado_por": agr, "total_grupos": len(filas), "grupos": filas[:n_]})
-        if len(filas) > n_:
-            advert.append(f"se muestran {n_} de {len(filas)} grupos")
+        filas = _ordenar_grupos(filas, "pedidos", agr, orden=ord_)
+        advert += _aviso_orden(ord_, agr)
+        _agregar_grupos(res, advert, agr, filas, "pedidos", n_)
     if int(invalidas.sum()):
         excl = diario.loc[invalidas]
         detalle = ", ".join(f"{r.sucursal_id} {r.fecha:%Y-%m-%d}" for r in excl.head(5).itertuples())
@@ -641,27 +748,30 @@ def pedidos(datos: Datos, region: str | None = None, sucursal_id: str | list[str
         advert.append("no hay pedidos válidos con esos filtros")
     advert += fil.advertencias_nuevas(datos)
     salida = _salida(res, fil, len(validas), advert)
-    return _recortar(salida, res, "grupos", "grupos") if agr else salida
+    return _recortar_grupos(salida, res, filas, "pedidos") if agr else salida
 
 
 @_herramienta
 def tasa_quejas(datos: Datos, region: str | None = None, sucursal_id: str | list[str] | None = None,
                 categoria: str | None = None, canal: str | None = None, fecha_desde: str | None = None,
                 fecha_hasta: str | None = None, mes: str | None = None, agrupar_por: str | None = None,
-                n: int | None = None) -> dict:
+                n: int | None = None, orden: str | None = None, ciudad: str | None = None) -> dict:
     """Tasa de quejas por cada 1.000 pedidos (ratio de sumas emparejado, regla única de la app).
 
     tasa = quejas en días válidos / pedidos válidos * 1000. Los días-sucursal con pedidos inválidos
     se excluyen del numerador y del denominador; se informan `quejas_excluidas` y `dias_excluidos`.
-    Filtros: region, sucursal_id, categoria, canal, fecha_desde, fecha_hasta, mes. Con categoria o
-    canal, el numerador son solo las quejas de esa categoría/canal (en días válidos).
+    Filtros: region, ciudad, sucursal_id, categoria, canal, fecha_desde, fecha_hasta, mes. Con
+    categoria o canal, el numerador son solo las quejas de esa categoría/canal (en días válidos).
     agrupar_por ∈ {region, sucursal, mes, semana, dia_semana}: `grupos` con la tasa de cada grupo
-    (region/sucursal/dia_semana de mayor a menor; mes/semana en orden cronológico).
+    (region/sucursal/dia_semana de mayor a menor; mes/semana en orden cronológico); orden ∈
+    {desc, asc, cronologico} cambia ese orden. Si los grupos se recortan, `maximo` y `minimo` son
+    sobre todos. Por sucursal, cada grupo trae `es_nueva` (y `dias_abierta` si es nueva).
     Para el top N de sucursales usá `ranking_sucursales(metrica="tasa")` (excluye las recién abiertas).
     """
     fil = _filtros(datos, region=region, sucursal_id=sucursal_id, categoria=categoria, canal=canal,
-                   fecha_desde=fecha_desde, fecha_hasta=fecha_hasta, mes=mes)
+                   fecha_desde=fecha_desde, fecha_hasta=fecha_hasta, mes=mes, ciudad=ciudad)
     agr = _agrupacion(agrupar_por, AGRUPACIONES_TASA)
+    ord_ = _orden_grupos(orden)
     n_, advert = _entero(n, "n", N_GRUPOS_DEFAULT)
     advert = fil.advertencias + advert
     if fil.vacio:
@@ -675,10 +785,18 @@ def tasa_quejas(datos: Datos, region: str | None = None, sucursal_id: str | list
     if agr:
         claves = _clave_grupo(diario[_COLUMNA_GRUPO[agr]])
         filas = [{"clave": k, **_tasa(g)} for k, g in diario.groupby(claves)]
-        filas = _ordenar_grupos(filas, "tasa_por_1000", agr)
-        res.update({"agrupado_por": agr, "total_grupos": len(filas), "grupos": filas[:n_]})
-        if len(filas) > n_:
-            advert.append(f"se muestran {n_} de {len(filas)} grupos")
+        if agr == "sucursal":
+            info = datos.sucursales.set_index("sucursal_id")
+            for r in filas:
+                r["es_nueva"] = bool(info.at[r["clave"], "es_nueva"])
+                if r["es_nueva"]:
+                    r["dias_abierta"] = int((fil.hasta - info.at[r["clave"], "fecha_apertura"]).days)
+            advert.append("para rankings de sucursales por tasa conviene ranking_sucursales(metrica='tasa'), "
+                          f"que excluye las abiertas hace menos de {DIAS_MINIMOS_RANKING_TASA} días "
+                          "(acá están marcadas con es_nueva)")
+        filas = _ordenar_grupos(filas, "tasa_por_1000", agr, orden=ord_)
+        advert += _aviso_orden(ord_, agr)
+        _agregar_grupos(res, advert, agr, filas, "tasa_por_1000", n_)
     if res["dias_excluidos"]:
         advert.append(f"se excluyeron de la tasa {res['dias_excluidos']} días-sucursal con pedidos inválidos "
                       f"y sus {res['quejas_excluidas']} quejas")
@@ -686,11 +804,11 @@ def tasa_quejas(datos: Datos, region: str | None = None, sucursal_id: str | list
         advert.append("no hay pedidos válidos con esos filtros: la tasa no se puede calcular")
     advert += fil.advertencias_nuevas(datos)
     salida = _salida(res, fil, len(diario), advert)
-    return _recortar(salida, res, "grupos", "grupos") if agr else salida
+    return _recortar_grupos(salida, res, filas, "tasa_por_1000") if agr else salida
 
 
 @_herramienta
-def ranking_sucursales(datos: Datos, metrica: str = "tasa", region: str | None = None,
+def ranking_sucursales(datos: Datos, metrica: str = "tasa", region: str | None = None, ciudad: str | None = None,
                        sucursal_id: str | list[str] | None = None, categoria: str | None = None,
                        canal: str | None = None, fecha_desde: str | None = None, fecha_hasta: str | None = None,
                        mes: str | None = None, n: int = 5, orden: str = "desc",
@@ -698,8 +816,8 @@ def ranking_sucursales(datos: Datos, metrica: str = "tasa", region: str | None =
     """Top N de sucursales por quejas, tasa (quejas por 1.000 pedidos) o pedidos en una ventana.
 
     metrica ∈ {quejas, tasa, pedidos}; orden ∈ {desc (las de más), asc (las de menos)}; n (defecto 5,
-    máx. 30); desempate por sucursal_id. Filtros: region, sucursal_id, categoria, canal (no aplican a
-    pedidos), fecha_desde, fecha_hasta, mes. Ejemplo: "más pedidos en la semana del 2 de marzo" ->
+    máx. 30); desempate por sucursal_id. Filtros: region, ciudad, sucursal_id, categoria, canal (no
+    aplican a pedidos), fecha_desde, fecha_hasta, mes. Ejemplo: "más pedidos en la semana del 2 de marzo" ->
     metrica="pedidos", fecha_desde="2026-03-02", fecha_hasta="2026-03-08".
     - quejas: todas las quejas de la ventana. pedidos: pedidos válidos. Ninguna excluye sucursales.
     - tasa: ratio de sumas emparejado por sucursal. Se EXCLUYEN las sucursales con menos de 28 días
@@ -711,7 +829,7 @@ def ranking_sucursales(datos: Datos, metrica: str = "tasa", region: str | None =
     ord_ = _elegir(orden if orden is not None else "desc", ORDENES, "orden")
     nuevas_ok = bool(_bool(incluir_nuevas, "incluir_nuevas"))
     fil = _filtros(datos, region=region, sucursal_id=sucursal_id, categoria=categoria, canal=canal,
-                   fecha_desde=fecha_desde, fecha_hasta=fecha_hasta, mes=mes)
+                   fecha_desde=fecha_desde, fecha_hasta=fecha_hasta, mes=mes, ciudad=ciudad)
     if met == "pedidos" and (fil.categoria or fil.canal):
         raise _ErrorHerramienta("los pedidos no tienen categoría ni canal: quitá esos filtros o usá "
                                 "metrica='quejas' o 'tasa'", ["quejas", "tasa"])
