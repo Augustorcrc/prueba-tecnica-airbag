@@ -192,3 +192,81 @@ def test_main_jsonl_invalido_y_falta_clave(tmp_path, monkeypatch, capsys):
     assert "ANTHROPIC_API_KEY" in capsys.readouterr().err
     # con agente inyectado pero juez real habilitado también exige la clave del juez
     assert ev.main([str(EJEMPLO), "--salida", str(tmp_path)], responder=lambda p: None) == 1
+
+
+# ---------------------------------------------------------------- Fix C: costo por pregunta, ids, rate limit
+
+
+def test_costo_y_tokens_por_pregunta_no_se_multiplican_por_repeticiones(tmp_path):
+    preguntas = [{"id": "Q1", "pregunta": "¿Cuántas?", "respuesta_esperada": 30, "tipo": "numero", "tolerancia": 0}]
+    latencias = iter([1.0, 3.0])
+
+    def responder(_):
+        return Respuesta(tipo_respuesta="dato", valor=30.0,
+                         traza={"latencia_s": next(latencias), "uso": {"tokens_entrada": 1000, "tokens_salida": 100},
+                                "costo_usd": 0.01})
+
+    res = ev.correr_eval(preguntas, responder, repeticiones=2, usar_juez=False)
+    s = res["resumen"]
+    pp = s["por_pregunta_promedio"]
+    assert pp["tokens"] == 1100 and pp["tokens_entrada"] == 1000 and pp["tokens_salida"] == 100
+    assert pp["costo_usd"] == pytest.approx(0.01)
+    assert pp["latencia_media_s"] == pytest.approx(2.0) and pp["latencia_p95_s"] == pytest.approx(2.9)
+    assert pp["corridas_respondidas"] == 2
+    assert s["agente"] == {"tokens_entrada": 2000, "tokens_salida": 200, "costo_usd": pytest.approx(0.02)}
+    assert s["juez"]["tokens_entrada"] == 0 and s["juez"]["costo_usd"] is None
+    r = res["resultados"][0]
+    assert r["tokens_medios_por_corrida"] == 1100 and r["costo_medio_por_corrida_usd"] == pytest.approx(0.01)
+    assert ev.filas_tabla(res)[0][-2:] == ["1100", "0.0100"]
+
+    ev.escribir_reportes(res, tmp_path)
+    md = (tmp_path / "reporte.md").read_text(encoding="utf-8")
+    seccion = md.split("## Costo y latencia por pregunta (agente)")[1]
+    assert "| tokens totales | 1100 |" in seccion and "| costo | US$0.0100 |" in seccion
+    assert "| latencia p95 | 2.90 s |" in seccion
+
+
+def test_por_pregunta_separa_juez_y_excluye_excepciones():
+    preguntas = [{"id": "Q1", "pregunta": "a", "respuesta_esperada": "demora", "tipo": "texto", "tolerancia": None}]
+    contador = count()
+
+    def responder(_):
+        if next(contador) == 0:
+            raise ValueError("se rompió")
+        return Respuesta(tipo_respuesta="dato", texto="No pude determinarlo.",
+                         traza={"uso": {"tokens_entrada": 500, "tokens_salida": 50}, "costo_usd": 0.005})
+
+    class Mensaje:
+        usage_metadata = {"input_tokens": 300, "output_tokens": 30}
+
+    class Juez:
+        def invoke(self, _):
+            return {"raw": Mensaje(), "parsed": Veredicto(correcto=False, razon="no"), "parsing_error": None}
+
+    res = ev.correr_eval(preguntas, responder, repeticiones=2, juez=Juez())
+    s = res["resumen"]
+    assert s["por_pregunta_promedio"]["tokens"] == 550  # la corrida con excepción no cuenta, el juez tampoco
+    assert s["por_pregunta_promedio"]["costo_usd"] == pytest.approx(0.005)
+    assert s["juez"]["tokens_entrada"] == 300 and s["juez"]["tokens_salida"] == 30
+
+
+def test_id_no_string_se_convierte(tmp_path):
+    ruta = tmp_path / "ids.jsonl"
+    ruta.write_text('{"id": 7, "pregunta": "p", "respuesta_esperada": 1, "tipo": "numero"}\n', encoding="utf-8")
+    assert ev.cargar_preguntas(ruta)[0]["id"] == "7"
+
+
+@pytest.mark.parametrize(
+    "error, esperado",
+    [
+        (ValueError("failed to generate the answer"), False),
+        (ValueError("not accurate"), False),
+        (RuntimeError("the rate of errors is high"), False),
+        (RuntimeError("Error code: 429"), True),
+        (RuntimeError("rate_limit_error: slow down"), True),
+        (RuntimeError("Rate limit exceeded"), True),
+        (RuntimeError("Too Many Requests"), True),
+    ],
+)
+def test_es_rate_limit(error, esperado):
+    assert ev.es_rate_limit(error) is esperado

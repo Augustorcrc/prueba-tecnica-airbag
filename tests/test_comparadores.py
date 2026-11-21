@@ -177,3 +177,100 @@ def test_sin_datos_acepta_negaciones():
                   "Los datos no incluyen montos en pesos."]:
         r = Respuesta(tipo_respuesta="dato", texto=texto, valor=None, tipo_valor="ninguno")
         assert comparar(r, _item_sin_datos(), usar_juez=False).ok, texto
+
+
+# ---------------------------------------------------------------- texto: respuestas incorrectas (Fix C, I1)
+
+
+@pytest.mark.parametrize(
+    "esperada, valor, texto",
+    [
+        ("demora", "pedido_incorrecto", "La más común es pedido_incorrecto, seguida de demora."),
+        ("S052", "S083", "La sucursal con más pedidos fue S083, por encima de S052."),
+        ("app", None, "La mayoría llegan por en_tienda; app queda segunda."),
+        ("sábado", "viernes", "El día con más pedidos es el viernes; el sábado le sigue."),
+        ("36 sucursales, el 2026-02-09", 30, "30 sucursales (de 36 candidatas) el 2026-02-09."),
+        ("36 sucursales, el 2026-02-09", None, "30 sucursales (de 36 candidatas) el 2026-02-09."),
+        ("demora", None, "La más común es pedido incorrecto, seguida de demora."),
+        ("S052", None, "S083 tuvo más pedidos, por encima de S052."),
+        ("sábado", None, "Los viernes se atienden más pedidos; los sábados le siguen."),
+    ],
+)
+def test_texto_rechaza_respuestas_incorrectas(esperada, valor, texto):
+    juez_llamado = []
+
+    def juez(*a):
+        juez_llamado.append(a)
+        return Veredicto(correcto=True, razon="no debería llamarse")
+
+    r = c.comparar(resp(texto, valor=valor), item(esperada, "texto"), juez=juez)
+    assert not r.ok, r
+    assert not juez_llamado  # se decide sin juez: el texto no rescata un valor equivocado
+
+
+def test_responder_constante_no_aprueba_preguntas_de_texto():
+    from pathlib import Path
+
+    from eval.evaluar import cargar_preguntas
+
+    preguntas = cargar_preguntas(Path(c.__file__).parent / "preguntas_ejemplo.jsonl")
+    constante = resp("Son 30 sucursales; demora; app; S052", valor=30.0, tipo_valor="numero")
+    aprobadas = {p["id"] for p in preguntas if c.comparar(constante, p, usar_juez=False).ok}
+    assert aprobadas == {"P01"}  # P01 sí es 30; P04/P07/P08 ya no aprueban
+
+
+def test_repetir_la_pregunta_no_aprueba_r08b():
+    it = item("app", "texto", pregunta="Las quejas, ¿llegan más por teléfono, redes, tienda o app? ¿Cuál es el principal?")
+    r = c.comparar(resp("Las quejas llegan más por teléfono, redes, tienda o app."), it, usar_juez=False)
+    assert not r.ok and r.obtenida == "telefono"
+    assert c.comparar(resp("El principal es la app, seguida de teléfono."), it, usar_juez=False).ok
+
+
+@pytest.mark.parametrize(
+    "esperada, valor, texto",
+    [
+        ("demora", None, "La categoría más común es la demora"),
+        ("demora", "demora", "La categoría más común es la demora"),
+        ("demora", "demoras", None),
+        ("pedido_incorrecto", "pedido incorrecto", None),
+        ("pedido_incorrecto", None, "Predominan los pedidos incorrectos, luego la demora."),
+        ("calidad_producto", None, "Lo más común es la calidad del producto."),
+        ("en_tienda", "tienda", None),
+        ("sábado", "sabado", None),
+        ("sábado", None, "Los sábados se atienden más pedidos en promedio."),
+        ("S052", "s052", None),
+        ("S052", None, "La sucursal S052, con 2.150 pedidos; le sigue S083."),
+        ("36 sucursales, el 2026-02-09", 36, "Se capacitaron el 2026-02-09."),
+        ("36 sucursales, el 2026-02-09", 36.0, "El 2026-02-09 se capacitaron 36 sucursales."),
+        ("36 sucursales, el 2026-02-09", "36", "El 2026-02-09 se capacitaron 36 sucursales."),
+    ],
+)
+def test_texto_casos_buenos(esperada, valor, texto):
+    assert c.comparar(resp(texto, valor=valor), item(esperada, "texto"), usar_juez=False).ok
+
+
+def test_valor_largo_se_trata_como_texto():
+    largo = "la categoría más común en la región Norte es la demora según los datos"
+    assert c.comparar(resp(None, valor=largo), item("demora", "texto"), usar_juez=False).ok
+    malo = "la categoría más común en la región Norte es trato y luego demora según datos"
+    assert not c.comparar(resp(None, valor=malo), item("demora", "texto"), usar_juez=False).ok
+
+
+def test_dominio_sin_candidato_va_al_juez():
+    r = c.comparar(resp("No pude determinarlo."), item("demora", "texto"), usar_juez=False)
+    assert not r.ok and r.motivo == "requiere juez"
+
+
+def test_p05_valor_correcto_sin_fecha_iso_va_al_juez():
+    r = c.comparar(resp("Fueron 36, el 9 de febrero.", valor=36), item("36 sucursales, el 2026-02-09", "texto"),
+                   usar_juez=False)
+    assert not r.ok and r.motivo == "requiere juez"
+
+
+def test_dominio_de_y_primero_del_dominio():
+    assert c.dominio_de("pedido_incorrecto") == ("categoria", "pedido_incorrecto")
+    assert c.dominio_de("sábado") == ("dia", "sabado")
+    assert c.dominio_de("s052") == ("id", "S052")
+    assert c.dominio_de("36 sucursales, el 2026-02-09") is None
+    assert c.primero_del_dominio("por en_tienda; app segunda", "canal") == "en_tienda"
+    assert c.primero_del_dominio("por whatsapp", "canal") is None
