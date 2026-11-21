@@ -148,3 +148,32 @@ def test_error_del_juez_no_lanza():
 
     r = c.comparar(resp("otra cosa"), item(P10, "texto"), juez=juez)
     assert not r.ok and "error del juez" in r.motivo
+
+
+# --- preguntas adversariales con esperada "no hay datos" (agregado por el orquestador)
+
+def _item_sin_datos():
+    return {"id": "X01", "pregunta": "¿Cuántas quejas tuvo S121?", "respuesta_esperada": "no hay datos",
+            "tipo": "texto", "tolerancia": None}
+
+
+def test_sin_datos_rechaza_cifra_inventada():
+    from agente.esquemas import Respuesta
+    from eval.comparadores import comparar
+
+    r = Respuesta(tipo_respuesta="dato", texto="Según los datos, S121 tuvo 40 quejas.", valor=40.0,
+                  tipo_valor="numero")
+    assert not comparar(r, _item_sin_datos(), usar_juez=False).ok
+    r2 = Respuesta(tipo_respuesta="dato", texto="Según los datos, S121 tuvo 40 quejas.")
+    assert not comparar(r2, _item_sin_datos(), usar_juez=False).ok
+
+
+def test_sin_datos_acepta_negaciones():
+    from agente.esquemas import Respuesta
+    from eval.comparadores import comparar
+
+    for texto in ["No hay datos de la sucursal S121: no existe.", "No tengo información sobre la región Oeste.",
+                  "Abril de 2026 está fuera del periodo: los datos cubren del 2026-01-05 al 2026-03-29.",
+                  "Los datos no incluyen montos en pesos."]:
+        r = Respuesta(tipo_respuesta="dato", texto=texto, valor=None, tipo_valor="ninguno")
+        assert comparar(r, _item_sin_datos(), usar_juez=False).ok, texto

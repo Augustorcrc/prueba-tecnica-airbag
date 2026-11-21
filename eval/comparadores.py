@@ -27,6 +27,8 @@ Reglas documentadas:
   del agente le pide escribir fechas como `AAAA-MM-DD`; "9 de febrero" no alcanza para el token
   `2026-02-09` y la corrida pasa al juez. Si nada de eso alcanza se usa el LLM juez (si está
   habilitado); sin juez la corrida falla con motivo "requiere juez".
+- **"No hay datos".** Si la esperada es "no hay datos", la corrida pasa solo si el texto dice que no
+  hay datos (frases de negación) y `valor` está vacío: cualquier número o lista se considera inventado.
 """
 
 from __future__ import annotations
@@ -234,6 +236,36 @@ def coinciden_tokens(esperada: str, combinado: str) -> bool:
     )
 
 
+
+# ---------------------------------------------------------------- preguntas sin datos
+
+ESPERADAS_SIN_DATOS = {"no hay datos", "sin datos", "no hay informacion"}
+_RE_NEGACION_DATOS = re.compile(
+    r"\b(no hay (datos|informacion|registros?)|no tengo (datos|informacion)|no (existe|figura|aparece)n?"
+    r"|no (se )?encontr|no cuento con|sin datos|no dispongo|fuera del periodo|no (esta|estan) disponibles?"
+    r"|no (incluyen|contienen|registran)|no se registr)"
+)
+
+
+def es_esperada_sin_datos(esperada: Any) -> bool:
+    return isinstance(esperada, str) and normalizar_texto(esperada) in ESPERADAS_SIN_DATOS
+
+
+def comparar_sin_datos(respuesta: Respuesta) -> ResultadoComparacion:
+    """Esperada "no hay datos": pasa solo si el agente dice que no hay datos y NO da un valor.
+
+    Un número o una lista en `valor` cuenta como cifra inventada (falla aunque el texto mencione
+    "datos"). Se evalúa sin juez y sin tokens, para que "según los datos, S121 tuvo 40" no apruebe.
+    """
+    texto = texto_de(respuesta)
+    valor = respuesta.valor
+    if valor not in (None, "", []) and normalizar_texto(_formatear_valor(valor)) not in ESPERADAS_SIN_DATOS:
+        return ResultadoComparacion(False, _formatear_valor(valor), "sin_datos", "dio un valor en vez de decir que no hay datos")
+    if _RE_NEGACION_DATOS.search(normalizar_texto(texto)):
+        return ResultadoComparacion(True, texto, "sin_datos")
+    return ResultadoComparacion(False, texto, "sin_datos", "no dijo que no hay datos")
+
+
 # ---------------------------------------------------------------- entrada principal
 
 
@@ -269,6 +301,9 @@ def comparar(
             obtenida, metodo = extraer_ids(texto), "texto"
         ok = comparar_lista(obtenida, esperada)
         return ResultadoComparacion(ok, obtenida, metodo, None if ok else "lista distinta")
+
+    if tipo == "texto" and es_esperada_sin_datos(esperada):
+        return comparar_sin_datos(respuesta)
 
     if tipo == "texto":
         valor_str = _formatear_valor(respuesta.valor)
