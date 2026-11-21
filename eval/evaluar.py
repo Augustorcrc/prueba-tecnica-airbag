@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import re
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -86,6 +87,8 @@ def cargar_preguntas(ruta: str | Path, ids_vistos: Optional[dict[str, str]] = No
             item = json.loads(linea)
         except json.JSONDecodeError as e:
             raise ErrorJSONL(f"{ruta}:{n}: JSON inválido ({e.msg})") from e
+        if isinstance(item, dict) and item.get("id") is not None and not isinstance(item["id"], str):
+            item["id"] = str(item["id"])  # un id numérico (p. ej. 7) se acepta como "7"
         error = _validar_item(item)
         if error:
             raise ErrorJSONL(f"{ruta}:{n}: {error}")
@@ -103,10 +106,14 @@ def cargar_preguntas(ruta: str | Path, ids_vistos: Optional[dict[str, str]] = No
 # ---------------------------------------------------------------- ejecución
 
 
+_RE_RATE_LIMIT = re.compile(r"rate[\s_-]?limit|\b429\b|too many requests")
+
+
 def es_rate_limit(error: BaseException) -> bool:
-    """Heurística: el nombre de la clase o el mensaje mencionan "rate" o "429"."""
+    """Heurística: la clase o el mensaje mencionan "ratelimit"/"rate_limit"/"rate limit", "429" o
+    "too many requests" (no alcanza con "rate", que aparece en "generate" o "accurate")."""
     texto = f"{type(error).__name__} {error}".lower()
-    return "rate" in texto or "429" in texto
+    return bool(_RE_RATE_LIMIT.search(texto))
 
 
 def _llamar_con_reintentos(responder, pregunta: str, reintentos: int, espera_base_s: float) -> Respuesta:
@@ -189,6 +196,8 @@ def _resultado_pregunta(item: dict, corridas: list[dict]) -> dict:
     aciertos = sum(oks)
     latencias = [c["latencia_s"] for c in corridas]
     errores = [c["error"] for c in corridas if c["error"]]
+    respondidas = [c for c in corridas if c["motivo"] != "excepción en responder()"]
+    costos_conocidos = [c["costo_usd"] for c in respondidas if c["costo_usd"] is not None]
     juez_tokens_e = sum(c["juez"].get("tokens_entrada", 0) for c in corridas)
     juez_tokens_s = sum(c["juez"].get("tokens_salida", 0) for c in corridas)
     return {
@@ -214,6 +223,13 @@ def _resultado_pregunta(item: dict, corridas: list[dict]) -> dict:
         "tokens_entrada": sum(c["tokens_entrada"] for c in corridas),
         "tokens_salida": sum(c["tokens_salida"] for c in corridas),
         "costo_usd": _sumar_costos([c["costo_usd"] for c in corridas]),
+        # medias por corrida (= pregunta respondida una vez), solo del agente y sin corridas con excepción
+        "corridas_respondidas": len(respondidas),
+        "tokens_medios_por_corrida": (
+            sum(c["tokens_entrada"] + c["tokens_salida"] for c in respondidas) / len(respondidas)
+            if respondidas else None
+        ),
+        "costo_medio_por_corrida_usd": sum(costos_conocidos) / len(costos_conocidos) if costos_conocidos else None,
         "juez_tokens_entrada": juez_tokens_e,
         "juez_tokens_salida": juez_tokens_s,
         "juez_costo_usd": _sumar_costos([c["juez"].get("costo_usd") for c in corridas if c["juez"]]),
@@ -248,6 +264,12 @@ def resumir(resultados: list[dict]) -> dict:
     """Resumen global: aciertos, consistencia, latencias, tokens y costo."""
     n = len(resultados)
     latencias = [l for r in resultados for l in r["latencias_s"]]
+    respondidas = [c for r in resultados for c in r["corridas"] if c["motivo"] != "excepción en responder()"]
+    n_resp = len(respondidas)
+    lat_resp = [c["latencia_s"] for c in respondidas]
+    costos_resp = [c["costo_usd"] for c in respondidas if c["costo_usd"] is not None]
+    re_e = sum(c["tokens_entrada"] for c in respondidas)
+    re_s = sum(c["tokens_salida"] for c in respondidas)
     t_e = sum(r["tokens_entrada"] for r in resultados)
     t_s = sum(r["tokens_salida"] for r in resultados)
     jt_e = sum(r["juez_tokens_entrada"] for r in resultados)
@@ -278,9 +300,18 @@ def resumir(resultados: list[dict]) -> dict:
         "costo_agente_usd": costo_agente,
         "costo_juez_usd": costo_juez,
         "costo_total_usd": costo_total,
+        "agente": {"tokens_entrada": t_e, "tokens_salida": t_s, "costo_usd": costo_agente},
+        "juez": {"tokens_entrada": jt_e, "tokens_salida": jt_s, "costo_usd": costo_juez},
+        # Promedio por corrida respondida (= una pregunta respondida una vez), solo del agente: no se
+        # multiplica por las repeticiones ni mezcla el costo del juez.
         "por_pregunta_promedio": {
-            "tokens": (t_e + t_s + jt_e + jt_s) / n if n else None,
-            "costo_usd": costo_total / n if (n and costo_total is not None) else None,
+            "corridas_respondidas": n_resp,
+            "tokens_entrada": re_e / n_resp if n_resp else None,
+            "tokens_salida": re_s / n_resp if n_resp else None,
+            "tokens": (re_e + re_s) / n_resp if n_resp else None,
+            "costo_usd": sum(costos_resp) / len(costos_resp) if costos_resp else None,
+            "latencia_media_s": sum(lat_resp) / n_resp if n_resp else None,
+            "latencia_p95_s": percentil(lat_resp, 95),
         },
     }
 
@@ -368,15 +399,19 @@ def filas_tabla(resultado: dict) -> list[list[str]]:
     filas = []
     for r in resultado["resultados"]:
         lat = r["latencia_media_s"]
+        tok = r.get("tokens_medios_por_corrida")
+        costo = r.get("costo_medio_por_corrida_usd")
         filas.append([
             r["id"], r["tipo"], _corto(r["esperada"]), _corto(_obtenida_representativa(r)),
             "sí" if r["ok_mayoria"] else "no", r["aciertos_n"],
             f"{lat:.2f}" if lat is not None else "-",
+            f"{tok:.0f}" if tok is not None else "-",
+            f"{costo:.4f}" if costo is not None else "-",
         ])
     return filas
 
 
-ENCABEZADO = ["id", "tipo", "esperada", "obtenida", "ok", "aciertos", "latencia_s"]
+ENCABEZADO = ["id", "tipo", "esperada", "obtenida", "ok", "aciertos", "latencia_s", "tokens_corrida", "costo_corrida_usd"]
 
 
 def formatear_tabla(resultado: dict) -> str:
@@ -394,17 +429,22 @@ def _fmt(x: Optional[float], dec: int = 2, pref: str = "") -> str:
 
 def lineas_resumen(resumen: dict) -> list[str]:
     s = resumen
+    pp = s["por_pregunta_promedio"]
     out = [
         f"Aciertos por mayoría: {s['aciertos_mayoria']}/{s['preguntas']} ({s['tasa_mayoria']:.0%})",
         f"Aciertos estrictos (N de N): {s['aciertos_estrictos']}/{s['preguntas']} ({s['tasa_estricta']:.0%})",
         f"Consistencia: {s['consistentes']}/{s['preguntas']} ({s['tasa_consistencia']:.0%})",
         f"Corridas con error: {s['corridas_con_error']} de {s['corridas']}",
         f"Latencia media: {_fmt(s['latencia_media_s'])} s · p95: {_fmt(s['latencia_p95_s'])} s",
-        f"Tokens: agente {s['tokens_agente']['total']} · juez {s['tokens_juez']['total']} · total {s['tokens_totales']}",
-        f"Costo: agente {_fmt(s['costo_agente_usd'], 4, 'US$')} · juez {_fmt(s['costo_juez_usd'], 4, 'US$')}"
-        f" · total {_fmt(s['costo_total_usd'], 4, 'US$')}",
-        f"Por pregunta (promedio): {_fmt(s['por_pregunta_promedio']['tokens'], 0)} tokens · "
-        f"{_fmt(s['por_pregunta_promedio']['costo_usd'], 4, 'US$')}",
+        f"Agente: {s['agente']['tokens_entrada']} tokens de entrada · {s['agente']['tokens_salida']} de salida"
+        f" · {_fmt(s['agente']['costo_usd'], 4, 'US$')}",
+        f"Juez: {s['juez']['tokens_entrada']} tokens de entrada · {s['juez']['tokens_salida']} de salida"
+        f" · {_fmt(s['juez']['costo_usd'], 4, 'US$')}",
+        f"Costo total (agente + juez): {_fmt(s['costo_total_usd'], 4, 'US$')}",
+        f"Por pregunta respondida una vez (agente): {_fmt(pp['tokens'], 0)} tokens"
+        f" ({_fmt(pp['tokens_entrada'], 0)} entrada · {_fmt(pp['tokens_salida'], 0)} salida) · "
+        f"{_fmt(pp['costo_usd'], 4, 'US$')} · latencia media {_fmt(pp['latencia_media_s'])} s"
+        f" · p95 {_fmt(pp['latencia_p95_s'])} s",
     ]
     for nombre, clave in (("Por tipo", "por_tipo"), ("Por archivo", "por_archivo")):
         partes = [
@@ -413,6 +453,25 @@ def lineas_resumen(resumen: dict) -> list[str]:
         ]
         out.append(f"{nombre}: " + "; ".join(partes))
     return out
+
+
+def tabla_costo_latencia(resumen: dict) -> list[str]:
+    """Tabla Markdown (lista para copiar al README) con el costo y la latencia de UNA respuesta del
+    agente: promedio por corrida respondida, sin el juez ni el efecto de las repeticiones."""
+    pp = resumen["por_pregunta_promedio"]
+    return [
+        f"Promedio sobre {pp['corridas_respondidas']} corridas respondidas (cada corrida = una pregunta "
+        "respondida una vez; no incluye el LLM juez).",
+        "",
+        "| métrica | valor |",
+        "|---|---|",
+        f"| tokens de entrada | {_fmt(pp['tokens_entrada'], 0)} |",
+        f"| tokens de salida | {_fmt(pp['tokens_salida'], 0)} |",
+        f"| tokens totales | {_fmt(pp['tokens'], 0)} |",
+        f"| costo | {_fmt(pp['costo_usd'], 4, 'US$')} |",
+        f"| latencia media | {_fmt(pp['latencia_media_s'])} s |",
+        f"| latencia p95 | {_fmt(pp['latencia_p95_s'])} s |",
+    ]
 
 
 def formatear_markdown(resultado: dict) -> str:
@@ -432,6 +491,7 @@ def formatear_markdown(resultado: dict) -> str:
     ]
     md += ["| " + " | ".join(celda(c) for c in f) + " |" for f in filas_tabla(resultado)]
     md += ["", "## Resumen", ""] + [f"- {l}" for l in lineas_resumen(resultado["resumen"])]
+    md += ["", "## Costo y latencia por pregunta (agente)", ""] + tabla_costo_latencia(resultado["resumen"])
     fallos = [
         (r["id"], c) for r in resultado["resultados"] for c in r["corridas"] if not c["ok"]
     ]

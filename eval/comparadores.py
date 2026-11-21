@@ -20,13 +20,32 @@ Reglas documentadas:
   lo llena, el texto no se mira.
 - **Listas.** IDs `S\\d{3}` en orden de aparición, sin duplicados. Igualdad exacta y en el mismo
   orden tras normalizar mayúsculas/espacios.
-- **Texto.** Se normaliza (minúsculas, sin tildes, sin puntuación, espacios colapsados). Pasa si la
-  esperada es subcadena (por palabras completas) del texto o del valor. Si no, y la esperada tiene
-  ≤ 8 palabras, pasa si todos sus tokens clave (números, fechas ISO, IDs y palabras de ≥ 4 letras
-  que no sean stopwords) aparecen en texto + valor. Las fechas se buscan en formato ISO: el prompt
-  del agente le pide escribir fechas como `AAAA-MM-DD`; "9 de febrero" no alcanza para el token
-  `2026-02-09` y la corrida pasa al juez. Si nada de eso alcanza se usa el LLM juez (si está
-  habilitado); sin juez la corrida falla con motivo "requiere juez".
+- **Texto.** Se normaliza (minúsculas, sin tildes, sin puntuación, `_` como espacio, espacios
+  colapsados; singular/plural equivalentes al comparar claves). Reglas, en orden:
+
+  1. **Esperada corta (≤ 8 palabras) con `valor` informativo** (no vacío y ≤ 8 palabras): se decide
+     SOLO por el valor; el texto no puede "rescatar" un valor equivocado.
+     - Si la esperada es de un dominio conocido (categoría de queja, canal, día de la semana o ID
+       `S###`), el primer elemento de ese dominio que aparece en el valor tiene que ser la esperada
+       ("pedido_incorrecto" = "pedido incorrecto", "sabado" = "sábado", "S052" = "s052").
+     - Si la esperada es compuesta con número (P05: "36 sucursales, el 2026-02-09"), el primer número
+       del valor tiene que ser el de la esperada; si coincide, alcanza con que las fechas ISO e IDs
+       de la esperada estén en texto + valor (si no tiene fechas ni IDs, se exigen todos los tokens);
+       si faltan, juez.
+     - Si no, igualdad de claves normalizadas.
+  2. **Sin valor informativo** (un valor de más de 8 palabras se trata como texto):
+     - Esperada de dominio conocido: el PRIMER candidato de ese dominio que aparece en el texto tiene
+       que ser la esperada. "pedido_incorrecto, seguida de demora" no aprueba "demora", y repetir la
+       pregunta ("¿teléfono, redes, tienda o app?") tampoco aprueba "app". Si el texto no nombra
+       ningún candidato del dominio, decide el juez.
+     - Si no: pasa si la esperada es subcadena (por palabras completas) del texto; o, si tiene ≤ 8
+       palabras, si todos sus tokens clave (números, fechas ISO, IDs y palabras de ≥ 4 letras que no
+       sean stopwords) aparecen en el texto. Si la esperada tiene un número, además el PRIMER número
+       del texto (fuera de fechas e IDs) tiene que ser ese ("30 sucursales (de 36 candidatas)" falla).
+  Las fechas se buscan en formato ISO: el prompt del agente le pide escribir fechas como `AAAA-MM-DD`;
+  "9 de febrero" no alcanza para el token `2026-02-09` y la corrida pasa al juez. Si nada de eso
+  decide se usa el LLM juez (si está habilitado; siempre para esperadas largas como P10); sin juez la
+  corrida falla con motivo "requiere juez".
 - **"No hay datos".** Si la esperada es "no hay datos", la corrida pasa solo si el texto dice que no
   hay datos (frases de negación) y `valor` está vacío: cualquier número o lista se considera inventado.
 """
@@ -237,6 +256,80 @@ def coinciden_tokens(esperada: str, combinado: str) -> bool:
 
 
 
+# ---------------------------------------------------------------- dominios conocidos (texto corto)
+
+
+def _singular(token: str) -> str:
+    """Singular aproximado para comparar claves ("demoras" → "demora", "sucursales" → "sucursal")."""
+    if len(token) > 4 and token.endswith("es"):
+        return token[:-2]
+    if len(token) > 3 and token.endswith("s"):
+        return token[:-1]
+    return token
+
+
+def clave(texto: Any) -> str:
+    """Texto normalizado con cada palabra en singular (para igualdad tolerante)."""
+    return " ".join(_singular(t) for t in normalizar_texto(texto).split())
+
+
+# Dominio → {valor canónico: alias}. Los alias se comparan con `clave()` (por eso van en singular).
+DOMINIOS: dict[str, dict[str, list[str]]] = {
+    "categoria": {
+        "demora": ["demora"],
+        "pedido_incorrecto": ["pedido incorrecto"],
+        "trato": ["trato"],
+        "limpieza": ["limpieza"],
+        "calidad_producto": ["calidad producto", "calidad del producto", "calidad de producto",
+                             "calidad de los productos", "calidad de lo producto"],
+    },
+    "canal": {
+        "app": ["app", "aplicacion"],
+        "telefono": ["telefono"],
+        "redes": ["redes", "redes sociales"],
+        "en_tienda": ["en tienda", "tienda", "presencial"],
+    },
+    "dia": {d: [d] for d in ("lunes", "martes", "miercoles", "jueves", "viernes", "sabado", "domingo")},
+}
+
+
+def dominio_de(esperada: Any) -> Optional[tuple[str, str]]:
+    """(dominio, valor canónico) si la esperada es una categoría, canal, día o un ID; si no, None."""
+    crudo = str(esperada).strip()
+    if re.fullmatch(r"[sS]\d{3}", crudo):
+        return "id", crudo.upper()
+    k = clave(crudo)
+    for dominio, valores in DOMINIOS.items():
+        for canonico, alias in valores.items():
+            if k == clave(canonico) or k in {clave(a) for a in alias}:
+                return dominio, canonico
+    return None
+
+
+def primero_del_dominio(texto: Any, dominio: str) -> Optional[str]:
+    """Primer elemento del `dominio` que aparece en el texto (valor canónico), o None."""
+    if dominio == "id":
+        ids = extraer_ids(texto)
+        return ids[0] if ids else None
+    t = f" {clave(texto)} "
+    mejor: Optional[tuple[int, int, str]] = None  # (posición, -largo, canónico)
+    for canonico, alias in DOMINIOS[dominio].items():
+        for a in {clave(canonico), *(clave(x) for x in alias)}:
+            pos = t.find(f" {a} ")
+            if pos >= 0 and (mejor is None or (pos, -len(a)) < mejor[:2]):
+                mejor = (pos, -len(a), canonico)
+    return mejor[2] if mejor else None
+
+
+def _primer_numero_ok(esperada: str, texto: Any) -> bool:
+    """Si la esperada tiene un número, ¿el primer número del texto es ese?"""
+    numeros_esp = extraer_numeros(esperada)
+    if not numeros_esp:
+        return True
+    obtenido = parsear_numero(texto)
+    return obtenido is not None and abs(obtenido - numeros_esp[0]) <= EPSILON
+
+
 # ---------------------------------------------------------------- preguntas sin datos
 
 ESPERADAS_SIN_DATOS = {"no hay datos", "sin datos", "no hay informacion"}
@@ -264,6 +357,72 @@ def comparar_sin_datos(respuesta: Respuesta) -> ResultadoComparacion:
     if _RE_NEGACION_DATOS.search(normalizar_texto(texto)):
         return ResultadoComparacion(True, texto, "sin_datos")
     return ResultadoComparacion(False, texto, "sin_datos", "no dijo que no hay datos")
+
+
+def _usar_juez(item: dict, esperada: Any, combinado: str, obtenida: Any, usar_juez: bool, juez: Any,
+               motivo_sin_juez: str = "requiere juez") -> ResultadoComparacion:
+    if not usar_juez:
+        return ResultadoComparacion(False, obtenida, "ninguno", motivo_sin_juez)
+    from eval.juez import juzgar
+
+    try:
+        veredicto, uso = juzgar(item.get("pregunta", ""), esperada, combinado.strip(), juez=juez)
+    except Exception as e:  # el juez falla → la corrida falla, el eval sigue
+        return ResultadoComparacion(False, obtenida, "juez", f"error del juez: {type(e).__name__}: {e}")
+    return ResultadoComparacion(bool(veredicto.correcto), obtenida, "juez", veredicto.razon, uso_juez=uso)
+
+
+def _comparar_texto(respuesta: Respuesta, item: dict, texto: str, *, usar_juez: bool, juez: Any) -> ResultadoComparacion:
+    """Regla de texto documentada en el módulo (valor primero; dominio por primer candidato; juez)."""
+    esperada = str(item["respuesta_esperada"])
+    esp_norm = normalizar_texto(esperada)
+    corta = len(esp_norm.split()) <= MAX_PALABRAS_TOKENS
+    dominio = dominio_de(esperada) if corta else None
+    valor_str = _formatear_valor(respuesta.valor)
+    n_palabras_valor = len(normalizar_texto(valor_str).split())
+    valor_informativo = 0 < n_palabras_valor <= MAX_PALABRAS_TOKENS
+
+    # 1) Esperada corta con valor informativo: decide el valor.
+    if corta and valor_informativo:
+        if dominio:
+            obtenido = primero_del_dominio(valor_str, dominio[0])
+            ok = obtenido == dominio[1]
+            return ResultadoComparacion(ok, valor_str, "valor", None if ok else f"valor distinto ({obtenido or valor_str})")
+        if extraer_numeros(esperada) and extraer_numeros(valor_str):
+            if not _primer_numero_ok(esperada, valor_str):
+                return ResultadoComparacion(False, valor_str, "valor", "número del valor distinto")
+            # El número (la respuesta) ya coincide: del texto se exigen las fechas e IDs de la esperada.
+            combinado = f"{texto} {valor_str}"
+            tk = tokens_clave(esperada)
+            if (tk["fechas"] or tk["ids"]) and all(f in _RE_FECHA_ISO.findall(combinado) for f in tk["fechas"]) \
+                    and all(i in extraer_ids(combinado) for i in tk["ids"]):
+                return ResultadoComparacion(True, valor_str, "valor")
+            if _contiene_frase(esp_norm, normalizar_texto(combinado)) or coinciden_tokens(esperada, combinado):
+                return ResultadoComparacion(True, valor_str, "valor")
+            return _usar_juez(item, esperada, combinado, valor_str, usar_juez, juez)
+        if clave(valor_str) == clave(esperada):
+            return ResultadoComparacion(True, valor_str, "valor")
+        if not extraer_numeros(esperada):
+            return ResultadoComparacion(False, valor_str, "valor", "valor distinto")
+        # esperada compuesta con número pero valor sin número: se sigue con el texto
+
+    # 2) Sin valor informativo: se mira el texto (un valor largo cuenta como texto).
+    texto_eval = texto if valor_informativo else f"{texto} {valor_str}".strip()
+    obtenida = texto_eval if not valor_informativo else (valor_str or texto)
+    if dominio:
+        obtenido = primero_del_dominio(texto_eval, dominio[0])
+        if obtenido is not None:
+            ok = obtenido == dominio[1]
+            return ResultadoComparacion(ok, obtenido, "texto", None if ok else f"el primer candidato del texto es {obtenido}")
+        return _usar_juez(item, esperada, texto_eval, obtenida, usar_juez, juez)
+
+    if corta and not _primer_numero_ok(esperada, texto_eval):
+        return ResultadoComparacion(False, obtenida, "tokens", "el primer número del texto no es el esperado")
+    if _contiene_frase(esp_norm, normalizar_texto(texto_eval)):
+        return ResultadoComparacion(True, obtenida, "texto")
+    if corta and coinciden_tokens(esperada, texto_eval):
+        return ResultadoComparacion(True, obtenida, "tokens")
+    return _usar_juez(item, esperada, f"{texto} {valor_str}" if valor_informativo else texto_eval, obtenida, usar_juez, juez)
 
 
 # ---------------------------------------------------------------- entrada principal
@@ -306,27 +465,7 @@ def comparar(
         return comparar_sin_datos(respuesta)
 
     if tipo == "texto":
-        valor_str = _formatear_valor(respuesta.valor)
-        esp_norm = normalizar_texto(esperada)
-        obtenida = valor_str or texto
-        if _contiene_frase(esp_norm, normalizar_texto(valor_str)):
-            return ResultadoComparacion(True, obtenida, "valor")
-        if _contiene_frase(esp_norm, normalizar_texto(texto)):
-            return ResultadoComparacion(True, obtenida, "texto")
-        combinado = f"{texto} {valor_str}"
-        if len(esp_norm.split()) <= MAX_PALABRAS_TOKENS and coinciden_tokens(str(esperada), combinado):
-            return ResultadoComparacion(True, obtenida, "tokens")
-        if not usar_juez:
-            return ResultadoComparacion(False, obtenida, "ninguno", "requiere juez")
-        from eval.juez import juzgar
-
-        try:
-            veredicto, uso = juzgar(item.get("pregunta", ""), esperada, combinado.strip(), juez=juez)
-        except Exception as e:  # el juez falla → la corrida falla, el eval sigue
-            return ResultadoComparacion(False, obtenida, "juez", f"error del juez: {type(e).__name__}: {e}")
-        return ResultadoComparacion(
-            bool(veredicto.correcto), obtenida, "juez", veredicto.razon, uso_juez=uso
-        )
+        return _comparar_texto(respuesta, item, texto, usar_juez=usar_juez, juez=juez)
 
     raise ValueError(f"tipo inválido: {tipo!r} (válidos: {', '.join(TIPOS_VALIDOS)})")
 
