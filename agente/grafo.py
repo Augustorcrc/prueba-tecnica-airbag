@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Any
 from langgraph.graph import END, START, StateGraph
 
 from agente import nodos
-from agente.config import RECURSION_LIMIT
+from agente.config import RECURSION_LIMIT, tool_choice_para
 from agente.esquemas import RespuestaFinal
 from agente.estado import Estado
 
@@ -34,8 +34,17 @@ if TYPE_CHECKING:  # pragma: no cover
 
 
 def config_invocacion(**extra: Any) -> dict:
-    """Config para `grafo.invoke`: `recursion_limit=RECURSION_LIMIT` (25) más lo que se agregue."""
+    """Config para `grafo.invoke`: `recursion_limit=RECURSION_LIMIT` (30) más lo que se agregue."""
     return {"recursion_limit": RECURSION_LIMIT, **extra}
+
+
+def tool_choice_elegido(modelo: Any) -> str:
+    """"any" si el modelo lo soporta, "auto" si no. Si no se puede saber el nombre (modelo falso), "any"."""
+    for atributo in ("model", "model_name"):
+        nombre = getattr(modelo, atributo, None)
+        if isinstance(nombre, str) and nombre:
+            return tool_choice_para(nombre)
+    return "any"
 
 
 def construir_grafo(
@@ -45,6 +54,7 @@ def construir_grafo(
     verificador: nodos.Verificador | None = None,
     ids_validos: set[str] | None = None,
     completar_recomendaciones: nodos.CompletarRecomendaciones | None = None,
+    tool_choice: str | None = None,
 ) -> CompiledStateGraph:
     """Arma y compila el grafo.
 
@@ -53,9 +63,13 @@ def construir_grafo(
       importa esa en tiempo de llamada.
     - `ids_validos`: IDs de sucursal válidos; `None` = no se validan IDs (se ignora `ids_invalidos`).
     - `completar_recomendaciones`: hook de WP-R para reponer ítems descartados al cerrar con advertencia.
+    - `tool_choice`: "any" (obliga a llamar alguna herramienta) o "auto". Si no se pasa, se elige según
+      el modelo (`tool_choice_elegido`): Sonnet 5.5, Opus 5.5 y Fable 5.1 no aceptan "any".
     """
     herramientas = list(herramientas)
-    ligado = modelo.bind_tools(herramientas + [RespuestaFinal], tool_choice="any")
+    if tool_choice is None:
+        tool_choice = tool_choice_elegido(modelo)
+    ligado = modelo.bind_tools(herramientas + [RespuestaFinal], tool_choice=tool_choice)
 
     g = StateGraph(Estado)
     g.add_node("modelo", nodos.crear_nodo_modelo(ligado))

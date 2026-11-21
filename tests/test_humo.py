@@ -39,3 +39,45 @@ def test_costo():
 
     assert costo_usd("anthropic:claude-sonnet-5-5", 1_000_000, 0) == pytest.approx(2.0)
     assert costo_usd("modelo-desconocido", 1, 1) is None
+
+
+def test_main_datos_inexistentes_error_claro_codigo_1(monkeypatch, capsys):
+    import main
+    from agente import agente as ag
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-falsa")
+    monkeypatch.setenv("DATOS_DIR", "/nonexistent")
+    monkeypatch.setattr(ag, "_cache_datos", None)
+    assert main.main(["hola"]) == 1
+    err = capsys.readouterr().err
+    assert err.startswith("Error: No pude cargar los datos de /nonexistent")
+    assert "límite de tasa" not in err
+
+
+def test_main_rate_limit_codigo_3(monkeypatch, capsys):
+    import main
+    from agente import agente as ag
+
+    class RateLimitError(Exception):
+        pass
+
+    def responder(_):
+        raise RateLimitError("Error code: 429 - rate_limit_error")
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-falsa")
+    monkeypatch.setattr(ag, "responder", responder)
+    assert main.main(["hola"]) == 3
+    assert "límite de tasa" in capsys.readouterr().err
+
+
+def test_main_otro_error_codigo_1(monkeypatch, capsys):
+    import main
+    from agente import agente as ag
+
+    def responder(_):
+        raise RuntimeError("algo se rompió")
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-falsa")
+    monkeypatch.setattr(ag, "responder", responder)
+    assert main.main(["hola"]) == 1
+    assert capsys.readouterr().err.strip() == "Error: algo se rompió"

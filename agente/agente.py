@@ -7,13 +7,21 @@
   exactamente las de `candidatos_visita`, en el mismo orden. Si el LLM cambia el orden, agrega otra
   sucursal o le falta alguna, se corrige en forma determinística y se deja en `traza.advertencias`.
   Los ítems descartados por el verificador se reponen con el hook `completar_recomendaciones`.
+- Red de seguridad (C2): si la respuesta es de recomendaciones, o se llamó a `candidatos_visita`, o la
+  pregunta pide recomendaciones según `es_pregunta_de_recomendacion`, y la salida no es una lista de
+  recomendaciones alineada con `candidatos_visita`, el JSON se arma en forma determinística
+  (`candidatos_visita` + `item_deterministico`). Cubre el corte por pasos, la respuesta de tipo dato,
+  los argumentos inválidos repetidos, las recomendaciones sin candidatos (ítems inventados) y los errores
+  del modelo (salvo el límite de tasa, que se propaga).
 """
 
 from __future__ import annotations
 
 import json
 import os
+import re
 import threading
+import unicodedata
 import time
 from datetime import datetime
 from pathlib import Path
@@ -21,7 +29,17 @@ from typing import TYPE_CHECKING, Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from agente.config import RAIZ, TIMEOUT_LLM_S, clave_api, costo_usd, modelo_llm, variable_clave_para
+from agente.config import (
+    RAIZ,
+    clave_api,
+    costo_usd,
+    datos_dir,
+    kwargs_modelo,
+    modelo_llm,
+    tool_choice_para,
+    variable_clave_para,
+)
+from agente.datos import CATEGORIAS, REGIONES
 from agente.esquemas import ItemRecomendacion, Respuesta, RespuestaFinal
 from agente.estado import estado_inicial
 from agente.grafo import config_invocacion, construir_grafo
@@ -44,24 +62,36 @@ _candado = threading.Lock()
 # --------------------------------------------------------------------------- datos y modelo
 
 
+class ErrorDeDatos(RuntimeError):
+    """No se pudieron cargar los CSV (directorio inexistente, archivo faltante o ilegible)."""
+
+
 def obtener_datos() -> "Datos":
-    """Datos cargados una sola vez por proceso."""
+    """Datos cargados una sola vez por proceso. Falla con `ErrorDeDatos` y un mensaje claro."""
     global _cache_datos
     with _candado:
         if _cache_datos is None:
             from agente.datos import cargar_datos
 
-            _cache_datos = cargar_datos()
+            try:
+                _cache_datos = cargar_datos()
+            except Exception as error:  # noqa: BLE001  (se re-lanza con contexto)
+                raise ErrorDeDatos(
+                    f"No pude cargar los datos de {datos_dir()} (revisá DATOS_DIR): {type(error).__name__}: {error}"
+                ) from error
         return _cache_datos
 
 
 def crear_modelo() -> "BaseChatModel":
-    """Modelo real: falla con `FaltaVariableDeEntorno` si no está la clave del proveedor."""
+    """Modelo real: falla con `FaltaVariableDeEntorno` si no está la clave del proveedor.
+
+    Los kwargs dependen del modelo (`kwargs_modelo`): Sonnet 5.5 no acepta `temperature`.
+    """
     nombre = modelo_llm()
     clave_api(variable_clave_para(nombre))
     from langchain.chat_models import init_chat_model
 
-    return init_chat_model(nombre, temperature=0, timeout=TIMEOUT_LLM_S, max_retries=2)
+    return init_chat_model(nombre, **kwargs_modelo(nombre))
 
 
 def _nombre_modelo(modelo: Any) -> str:
@@ -253,6 +283,146 @@ def alinear_con_candidatos(
     return corregida, advertencias
 
 
+# --------------------------------------------------------------------------- red de seguridad (C2)
+
+
+def _normalizar(texto: str) -> str:
+    t = unicodedata.normalize("NFKD", str(texto).lower())
+    return " ".join("".join(c for c in t if not unicodedata.combining(c)).split())
+
+
+# Patrones sobre el texto en minúsculas y sin tildes.
+_PATRONES_RECOMENDACION = [
+    r"\bvisit",  # visitar, visita(s), visito, plan de visitas
+    r"\brecomend",  # recomendame, recomendación, recomendás
+    r"\bsuger|\bsugier",  # sugerime, sugerencias, sugiere
+    r"\bque (deberia|tendria que|tengo que|hay que|conviene) (revisar|hacer|atacar|priorizar|mirar|mejorar)",
+    r"\bdonde\b.*\b(reforz|refuerz|actu|interven|enfoc|foco|poner el ojo)",
+    r"\bnecesit\w* atencion",
+    r"\ba que (locales|sucursales|tiendas|cafeterias)\b",
+    r"\bpriori",  # priorizar, prioridad(es)
+    r"\batac",  # atacar, ataco
+    r"\bplan de accion",
+    r"\bpor donde (empiezo|empezar|arranco|arrancar)",
+]
+
+
+def es_pregunta_de_recomendacion(pregunta: str) -> bool:
+    """Clasificador determinístico por palabras clave: ¿la pregunta pide recomendaciones / un plan?
+
+    "¿Cuál es la peor sucursal?" o "¿cuántas quejas...?" son datos: dan False.
+    """
+    texto = _normalizar(pregunta)
+    return any(re.search(p, texto) for p in _PATRONES_RECOMENDACION)
+
+
+_NUMEROS = {"una": 1, "uno": 1, "dos": 2, "tres": 3, "cuatro": 4, "cinco": 5, "seis": 6, "siete": 7,
+            "ocho": 8, "nueve": 9, "diez": 10}
+_CATEGORIAS_PREGUNTA = [
+    (r"\blimpi", "limpieza"),
+    (r"\bdemor|\btardanz|\bespera", "demora"),
+    (r"\btrato\b", "trato"),
+    (r"\bpedidos? (incorrecto|equivocado|errone)", "pedido_incorrecto"),
+    (r"\bcalidad", "calidad_producto"),
+]
+
+
+def parametros_de_pregunta(pregunta: str) -> dict:
+    """Args de `candidatos_visita` detectados por palabras clave: region, categoria y n."""
+    texto = _normalizar(pregunta)
+    args: dict = {}
+    for region in REGIONES:
+        if re.search(rf"\b{_normalizar(region)}\b", texto):
+            args["region"] = region
+            break
+    for patron, categoria in _CATEGORIAS_PREGUNTA:
+        if re.search(patron, texto) and categoria in CATEGORIAS:
+            args["categoria"] = categoria
+            break
+    numero = r"(\d{1,2}|" + "|".join(_NUMEROS) + r")"
+    m = re.search(rf"\b(?:dame|decime|recomendame|sugerime|top|las|los|primeras|primeros)\s+{numero}\b", texto) or re.search(
+        rf"\b{numero}\s+(?:sucursales|locales|tiendas|cafeterias|lugares)\b", texto
+    )
+    if m:
+        crudo = m.group(1)
+        n = int(crudo) if crudo.isdigit() else _NUMEROS[crudo]
+        if n >= 1:
+            args["n"] = n
+    return args
+
+
+def _resultado_candidatos(estado: dict, pregunta: str, datos: "Datos") -> dict | None:
+    """Resultado C2 de candidatos a usar: el de la última llamada exitosa del modelo; si no hubo, se
+    llama a `candidatos_visita` con lo detectado en la pregunta (y, si eso da error, con los defaults)."""
+    llamada = ultima_llamada_candidatos(estado)
+    if llamada is not None:
+        return llamada["resultado"]
+    for args in (parametros_de_pregunta(pregunta), {}):
+        resultado = candidatos_visita(datos, **args)
+        if isinstance(resultado, dict) and "resultado" in resultado:
+            return resultado
+    return None
+
+
+def recomendaciones_deterministicas(estado: dict, pregunta: str, datos: "Datos") -> RespuestaFinal | None:
+    """Lista de recomendaciones armada solo con `candidatos_visita` + `item_deterministico`."""
+    resultado = _resultado_candidatos(estado, pregunta, datos)
+    if resultado is None:
+        return None
+    candidatos = resultado["resultado"].get("candidatos") or []
+    if not candidatos:
+        return None
+    periodo = (resultado["resultado"].get("parametros") or {}).get("ventana")
+    return RespuestaFinal(
+        tipo_respuesta="recomendaciones",
+        texto=None,
+        valor=None,
+        tipo_valor="ninguno",
+        recomendaciones=[item_deterministico(c, periodo) for c in candidatos],
+    )
+
+
+def _motivo_reposicion(respuesta: RespuestaFinal | None, estado: dict) -> str | None:
+    """Por qué la salida no sirve como recomendaciones (None si es una lista válida y alineada)."""
+    llamada = ultima_llamada_candidatos(estado)
+    if respuesta is None:
+        return "el modelo no devolvió una respuesta"
+    if respuesta.tipo_respuesta != "recomendaciones":
+        if any("máximo de" in a and "pasos" in a for a in estado.get("advertencias") or []):
+            return "se alcanzó el máximo de pasos sin una respuesta final válida"
+        return "la respuesta del modelo fue de tipo dato"
+    if llamada is None:
+        return "el modelo respondió recomendaciones sin llamar a candidatos_visita (se descartaron sus ítems)"
+    if not respuesta.recomendaciones:
+        return "la respuesta de recomendaciones quedó vacía"
+    return None
+
+
+def asegurar_recomendaciones(
+    respuesta: RespuestaFinal, estado: dict, pregunta: str, datos: "Datos"
+) -> tuple[RespuestaFinal, list[str]]:
+    """Regla final de `responder()`: garantiza el JSON de recomendaciones cuando corresponde.
+
+    Corresponde si la respuesta es de recomendaciones, si se llamó a `candidatos_visita` o si la
+    pregunta pide recomendaciones. Una respuesta de tipo dato a una pregunta que no es de recomendación
+    y sin `candidatos_visita` no se toca.
+    """
+    corresponde = (
+        respuesta.tipo_respuesta == "recomendaciones"
+        or ultima_llamada_candidatos(estado) is not None
+        or es_pregunta_de_recomendacion(pregunta)
+    )
+    if not corresponde:
+        return respuesta, []
+    motivo = _motivo_reposicion(respuesta, estado)
+    if motivo is None:
+        return respuesta, []
+    nueva = recomendaciones_deterministicas(estado, pregunta, datos)
+    if nueva is None:
+        return respuesta, [f"No pude armar recomendaciones determinísticas ({motivo}): candidatos_visita sin resultados."]
+    return nueva, [f"Recomendaciones armadas en forma determinística porque {motivo}."]
+
+
 # --------------------------------------------------------------------------- traza
 
 
@@ -288,10 +458,16 @@ def es_rate_limit(error: BaseException) -> bool:
 def responder(
     pregunta: str, *, modelo: "BaseChatModel | None" = None, datos: "Datos | None" = None
 ) -> Respuesta:
-    """Responde una pregunta del gerente (C5). Ver docstring del módulo."""
+    """Responde una pregunta del gerente (C5). Ver docstring del módulo.
+
+    Lanza `FaltaVariableDeEntorno` (sin clave), `ErrorDeDatos` (no se pudieron cargar los CSV) y los
+    errores de límite de tasa. Cualquier otro error del proveedor o del grafo vuelve como `Respuesta`.
+    """
+    tool_choice = None
     if modelo is None:
         modelo = crear_modelo()  # lanza FaltaVariableDeEntorno si falta la clave
-    datos = datos if datos is not None else obtener_datos()
+        tool_choice = tool_choice_para(modelo_llm())
+    datos = datos if datos is not None else obtener_datos()  # lanza ErrorDeDatos con mensaje claro
     nombre_modelo = _nombre_modelo(modelo)
     inicio = time.perf_counter()
     traza: dict[str, Any] = {"pregunta": pregunta, "modelo": nombre_modelo, "error": None}
@@ -307,10 +483,15 @@ def responder(
             crear_herramientas(datos),
             ids_validos=set(datos.sucursales["sucursal_id"].astype(str)),
             completar_recomendaciones=hook,
+            tool_choice=tool_choice,
         )
         inicial = estado_inicial(pregunta, [SystemMessage(SYSTEM_PROMPT), HumanMessage(pregunta)])
         estado = grafo.invoke(inicial, config_invocacion())
         final, adv_alineacion = alinear_con_candidatos(estado["respuesta"], estado, registro)
+        final, adv_red = asegurar_recomendaciones(final, estado, pregunta, datos)
+        if adv_red and final.tipo_respuesta == "recomendaciones":
+            # la advertencia de "sin candidatos_visita" ya no aplica: los ítems se rearmaron
+            adv_alineacion = [a for a in adv_alineacion if "candidatos_visita" not in a]
         respuesta = Respuesta(**final.model_dump())
         uso = estado.get("uso") or {}
         traza.update(
@@ -320,20 +501,28 @@ def responder(
                 for c in estado.get("llamadas") or []
             ],
             verificacion=estado.get("verificacion"),
-            advertencias=list(estado.get("advertencias") or []) + adv_alineacion,
+            advertencias=list(estado.get("advertencias") or []) + adv_alineacion + adv_red,
         )
     except Exception as error:  # noqa: BLE001  (error del proveedor u otro: el eval sigue)
         if es_rate_limit(error):
             raise  # el eval reintenta con backoff; main.py lo informa
-        respuesta = Respuesta(
-            tipo_respuesta="dato",
-            texto=f"No pude completar la consulta: {type(error).__name__}: {error}",
-            valor=None,
-            tipo_valor="ninguno",
-        )
+        detalle = f"{type(error).__name__}: {error}"
+        advertencias: list[str] = []
+        recos = recomendaciones_deterministicas({}, pregunta, datos) if es_pregunta_de_recomendacion(pregunta) else None
+        if recos is not None:
+            respuesta = Respuesta(**recos.model_dump())
+            advertencias.append(
+                f"Recomendaciones armadas en forma determinística porque el modelo falló ({detalle})."
+            )
+        else:
+            respuesta = Respuesta(
+                tipo_respuesta="dato",
+                texto=f"No pude completar la consulta: {detalle}",
+                valor=None,
+                tipo_valor="ninguno",
+            )
         uso = {}
-        traza.update(pasos=None, llamadas=[], verificacion=None, advertencias=[],
-                     error=f"{type(error).__name__}: {error}")
+        traza.update(pasos=None, llamadas=[], verificacion=None, advertencias=advertencias, error=detalle)
 
     uso = {"tokens_entrada": int(uso.get("tokens_entrada", 0)), "tokens_salida": int(uso.get("tokens_salida", 0))}
     traza["latencia_s"] = round(time.perf_counter() - inicio, 3)
