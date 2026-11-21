@@ -32,7 +32,11 @@ proceso salga con error si la tasa de aciertos queda por debajo (pensado para CI
 
 ## Proveedor y modelo
 
-- **Agente:** Anthropic, Claude Sonnet 5.5 (`anthropic:claude-sonnet-5-5`), temperatura 0.
+- **Agente:** Anthropic, Claude Sonnet 5.5 (`anthropic:claude-sonnet-5-5`), con la temperatura por defecto:
+  Sonnet 5.5 no acepta `temperature=0` ni `tool_choice` forzado (langchain-anthropic lo valida del lado del
+  cliente). Por eso es menos determinista que un modelo a temperatura 0. Las cifras igual salen de las
+  herramientas y pasan por el verificador, y el orden de las recomendaciones lo decide un score
+  determinístico. La variabilidad queda en la redacción y en qué herramientas elige.
 - **Juez del eval:** Claude Haiku 5.5 (`anthropic:claude-haiku-5-5`), temperatura 0.
 
 El modelo se crea con `init_chat_model`, así que el código es agnóstico: se cambia con
@@ -47,8 +51,8 @@ Anthropic.
 | 8 filas de pedidos inválidos (5 con 99999, 3 negativos) | `pedidos_validos` = NULL; el día queda fuera de sumas y tasas | Con los crudos el total sube 15%, cambia el día de la semana con más pedidos y la sucursal top de la semana del 5 de enero |
 | 7 quejas caen en esos días inválidos | Cuentan en los conteos, pero no en el numerador de las tasas | Numerador y denominador sobre los mismos días. Mantenerlas cambia la tasa 0,02–0,07 en 8 sucursales |
 | 6 sucursales nuevas (abiertas el 16 y 17 de marzo, 13–14 días) | Fuera de los rankings por tasa (regla de 28 días abiertas), pero las menciono en el texto | Con pocos días la tasa es puro ruido |
-| Capacitación confundida: en el Norte se asignó al azar, en el resto se capacitó a las peores | Solo el diferencias-en-diferencias del Norte es causal: **-0,29 quejas por 1.000 pedidos (~-13%)** con ratio de sumas (-0,34 promediando por sucursal) | La comparación ingenua capacitadas vs. no capacitadas después de la capacitación concluye lo contrario |
-| S082 no tiene quejas | Tasa 0 con aviso de poco volumen | Evita leerla como "la mejor sucursal" sin contexto |
+| Capacitación confundida: en el Norte se asignó al azar, en el resto se capacitó a las peores | Solo el diferencias-en-diferencias del Norte es causal: **-0,29 quejas por 1.000 pedidos (~-15% respecto del contrafactual)** con ratio de sumas (-0,34 promediando por sucursal) | La comparación ingenua capacitadas vs. no capacitadas después de la capacitación concluye lo contrario |
+| S082 no tiene quejas (abrió el 17 de marzo) | Tasa 0, no NULL; queda fuera de los rankings por tasa como el resto de las nuevas | Evita leerla como "la mejor sucursal" sin contexto |
 
 Periodo: 2026-01-05 (lunes) a 2026-03-29 (domingo), 12 semanas. Tasa = quejas / pedidos × 1.000
 (ratio de sumas).
@@ -96,11 +100,12 @@ graph TD;
 	cerrar_con_advertencia --> __end__;
 ```
 
-- El modelo alterna con las herramientas. La respuesta sale por una tool `RespuestaFinal` y uso
-  `tool_choice="any"`, así que siempre hay estructura (si contesta en texto libre, `recordatorio` se lo pide).
+- El modelo alterna con las herramientas. La respuesta sale por una tool `RespuestaFinal`. Con modelos que
+  aceptan `tool_choice="any"` se fuerza; con Sonnet 5.5 va `"auto"` y, si contesta en texto libre, el nodo
+  `recordatorio` le pide que llame a `RespuestaFinal`.
 - `RespuestaFinal` tiene `texto` (para el gerente) y `valor` estructurado (número, texto o lista, para el eval).
 - Después se verifican las cifras; si falla, hay **un** reintento con feedback y, si vuelve a fallar,
-  se cierra con una advertencia visible. Máximo 8 pasos.
+  se cierra con una advertencia visible. Máximo 10 llamadas al modelo.
 
 Elegí un grafo propio y no un agente prearmado para controlar la verificación, el reintento y el corte.
 
@@ -124,7 +129,14 @@ los CSV y tiene prohibido importar el agente, para no validar el código contra 
    entre los números de los resultados de herramientas. Normaliza 2,15/2.15, separadores de miles y
    porcentajes; ignora años, fechas, IDs y los números que ya estaban en la pregunta.
 4. Si hay cifras sin respaldo: un reintento con la lista de cifras; si persiste, advertencia visible.
-5. Los IDs de sucursal se validan contra la tabla. Temperatura 0.
+5. Los IDs de sucursal se validan contra la tabla.
+6. Las recomendaciones son JSON armado por el código. Si el modelo no termina, contesta en texto o
+   inventa sucursales en una pregunta que pide recomendaciones, el JSON se arma de forma determinística
+   con `candidatos_visita`. Sus cifras salen del score, así que verifican por construcción.
+
+Límite conocido: el verificador busca cada cifra entre *todos* los números de los resultados, así que
+un entero chico (3, 6, 13) puede pasar por coincidencia con un conteo. Protege bien contra cifras
+inventadas "plausibles" (tasas, totales, porcentajes), no contra todos los casos.
 
 ## Costo y latencia
 
@@ -177,11 +189,18 @@ esperadas salen del oráculo.
 
 ## Estado y pendientes
 
+Todo lo que corre sin clave está hecho y testeado: 524 tests offline en verde, más 25 que necesitan clave
+y se saltean. Lo que falta necesita `ANTHROPIC_API_KEY`:
+
 - `TODO(eval)`: correr `make eval` con clave real y pegar la tasa de aciertos por pregunta (los tests
   offline usan un modelo falso).
 - `TODO(costo/latencia)`: completar con los números medidos por el eval.
 - `TODO(spike)`: correr la parte real del spike (`python spikes/spike_grafo.py --real`); la parte
   offline está aprobada (`spikes/RESULTADO.md`).
+- `TODO(tests con clave)`: `ANTHROPIC_API_KEY=... make test` corre los 25 tests `requiere_clave` (P01–P10
+  reales, 8 pedidos de recomendación, 5 que no lo son, estabilidad).
+- `uv.lock`: generarlo con `uv lock` y commitearlo, para fijar versiones (sobre todo `langchain-anthropic`,
+  que valida parámetros por modelo).
 
 ## Qué mejoraría con más tiempo
 
