@@ -1,4 +1,4 @@
-.PHONY: instalar test test-clave eval eval-robustez ask lint docker-test docker-build docker-ask docker-eval
+.PHONY: instalar test test-clave chat eval eval-robustez ask lint docker-test docker-build docker-ask docker-eval
 
 # PY se puede sobrescribir, por ejemplo: make test PY=python (con un venv ya activado)
 PY ?= uv run python
@@ -22,6 +22,10 @@ eval-robustez:
 
 ask:
 	$(PY) main.py "$(Q)"
+
+# Conversación con memoria (opcional; no la usa el eval).
+chat:
+	$(PY) main.py --chat
 
 lint:
 	$(PY) -m ruff check .

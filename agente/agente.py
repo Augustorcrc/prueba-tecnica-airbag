@@ -49,6 +49,7 @@ from agente.recomendaciones import PREFIJO_PREVENTIVA, candidatos_visita
 
 if TYPE_CHECKING:  # pragma: no cover
     from langchain_core.language_models import BaseChatModel
+    from langchain_core.messages import BaseMessage
 
     from agente.datos import Datos
 
@@ -462,9 +463,21 @@ def es_rate_limit(error: BaseException) -> bool:
 
 
 def responder(
-    pregunta: str, *, modelo: "BaseChatModel | None" = None, datos: "Datos | None" = None
+    pregunta: str,
+    *,
+    modelo: "BaseChatModel | None" = None,
+    datos: "Datos | None" = None,
+    historial: "list[BaseMessage] | None" = None,
+    llamadas_previas: list[dict] | None = None,
 ) -> Respuesta:
     """Responde una pregunta del gerente (C5). Ver docstring del módulo.
+
+    `historial` y `llamadas_previas` son opcionales y solo los usa el modo chat (`agente/chat.py`); sin
+    ellos el comportamiento es el de una pregunta suelta. `historial` son los mensajes de los turnos
+    anteriores (Human/AI) que se insertan entre el system prompt y la pregunta. `llamadas_previas` son
+    los resultados de herramientas de turnos anteriores: el verificador también los mira (una cifra que
+    ya salió antes no cuenta como inventada) y, si se pasa la lista, al terminar se actualiza en el
+    lugar con las llamadas de este turno agregadas.
 
     Lanza `FaltaVariableDeEntorno` (sin clave), `ErrorDeDatos` (no se pudieron cargar los CSV) y los
     errores de límite de tasa. Cualquier otro error del proveedor o del grafo vuelve como `Respuesta`.
@@ -491,8 +504,16 @@ def responder(
             completar_recomendaciones=hook,
             tool_choice=tool_choice,
         )
-        inicial = estado_inicial(pregunta, [SystemMessage(SYSTEM_PROMPT), HumanMessage(pregunta)])
-        estado = grafo.invoke(inicial, config_invocacion())
+        mensajes = [SystemMessage(SYSTEM_PROMPT), *(historial or []), HumanMessage(pregunta)]
+        inicial = estado_inicial(pregunta, mensajes)
+        n_previas = len(llamadas_previas or [])
+        inicial["llamadas"] = list(llamadas_previas or [])
+        estado_completo = grafo.invoke(inicial, config_invocacion())
+        if llamadas_previas is not None:
+            llamadas_previas[:] = list(estado_completo.get("llamadas") or [])
+        # De acá en adelante solo cuentan las llamadas de este turno (traza, alineación y red de
+        # seguridad de recomendaciones): las de turnos anteriores ya cumplieron su función en el verificador.
+        estado = {**estado_completo, "llamadas": list(estado_completo.get("llamadas") or [])[n_previas:]}
         final, adv_alineacion = alinear_con_candidatos(estado["respuesta"], estado, registro)
         final, adv_red = asegurar_recomendaciones(final, estado, pregunta, datos)
         if adv_red and final.tipo_respuesta == "recomendaciones":

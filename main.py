@@ -1,4 +1,7 @@
-"""CLI: python main.py "pregunta" [--traza].
+"""CLI: python main.py "pregunta" [--traza]   |   python main.py --chat [--traza]
+
+Sin `--chat` contesta una sola pregunta (es lo que usa el eval). Con `--chat` abre una conversación
+con memoria (opcional; ver `agente/chat.py`).
 
 Códigos de salida: 0 = ok; 1 = error (clave faltante, datos que no se pueden cargar u otro);
 2 = uso incorrecto; 3 = límite de tasa del proveedor.
@@ -15,15 +18,27 @@ from agente.config import FaltaVariableDeEntorno, clave_api, modelo_llm, variabl
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else list(argv)
     mostrar_traza = "--traza" in argv
-    argv = [a for a in argv if a != "--traza"]
-    if not argv or not argv[0].strip():
-        print('Uso: python main.py "tu pregunta" [--traza]', file=sys.stderr)
+    modo_chat = "--chat" in argv
+    argv = [a for a in argv if a not in ("--traza", "--chat")]
+    if not modo_chat and (not argv or not argv[0].strip()):
+        print('Uso: python main.py "tu pregunta" [--traza]  |  python main.py --chat [--traza]', file=sys.stderr)
         return 2
     try:
         clave_api(variable_clave_para(modelo_llm()))
     except FaltaVariableDeEntorno as e:
         print(f"Error: {e}", file=sys.stderr)
         return 1
+    if modo_chat:
+        from agente.agente import ErrorDeDatos, obtener_datos
+        from agente.chat import SesionChat, bucle_chat
+
+        try:
+            sesion = SesionChat(datos=obtener_datos())
+        except ErrorDeDatos as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 1
+        return bucle_chat(sesion, mostrar_traza=mostrar_traza)
+
     from agente.agente import es_rate_limit, responder
 
     try:

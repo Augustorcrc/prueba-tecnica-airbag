@@ -15,6 +15,7 @@ cp .env.example .env                      # y completo ANTHROPIC_API_KEY
 make test                                 # tests offline, no necesitan clave ni red
 make test-clave                           # tests contra el modelo real (gastan créditos)
 make ask Q="¿Cuántas quejas hubo en total?"
+make chat                                 # opcional: conversación con memoria (/nuevo, /salir)
 python main.py "¿Qué sucursales debería visitar esta semana?"
 make eval                                 # preguntas de ejemplo + propias, 3 repeticiones
 ```
@@ -33,6 +34,17 @@ python -m eval.evaluar eval/preguntas_ejemplo.jsonl eval/preguntas_propias.jsonl
 Imprime una tabla por pregunta y deja `reportes/reporte.{json,md}` (más una copia con fecha y hora).
 Una pregunta cuenta como acertada si acierta en la mayoría de las repeticiones. `--umbral` hace que el
 proceso salga con error si la tasa de aciertos queda por debajo (pensado para CI).
+
+### Modo chat (opcional)
+
+`make chat` (o `python main.py --chat [--traza]`) abre una conversación con memoria: "¿cuántas quejas tuvo
+el Sur en febrero?" y después "¿y en marzo?". Cada turno usa el mismo agente que una pregunta suelta,
+con dos agregados (`agente/chat.py`):
+- el modelo ve las últimas 6 preguntas y respuestas (solo el texto final);
+- el verificador también acepta cifras que salieron de herramientas en turnos anteriores.
+
+La memoria dura lo que dura la sesión. El eval y `python main.py "pregunta"` no usan este modo y
+siguen tratando cada pregunta por separado.
 
 ### Con Docker (alternativa)
 
@@ -225,7 +237,6 @@ y se saltean. Lo que falta necesita `ANTHROPIC_API_KEY`:
 - Intervalos de confianza de Poisson o shrinkage bayesiano para rankear sucursales con poco volumen.
 - Prompt caching del system prompt y del catálogo de herramientas (baja costo y latencia).
 - Probar con otros proveedores (el código ya lo permite) y comparar.
-- REPL con memoria de conversación para repreguntas.
 - Más preguntas adversariales (ambiguas, fuera del periodo, sucursales inexistentes).
 - Correr el eval en CI con clave, con `--umbral` como compuerta.
 
