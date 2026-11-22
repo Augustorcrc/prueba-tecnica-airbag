@@ -10,6 +10,7 @@ quejas, sucursales y capacitaciones, y recomienda qué sucursales visitar. Prueb
 uv sync                                   # crea .venv e instala dependencias (Python >= 3.11)
 cp .env.example .env                      # y completo ANTHROPIC_API_KEY
 make test                                 # tests offline, no necesitan clave ni red
+make test-clave                           # tests contra el modelo real (gastan créditos)
 make ask Q="¿Cuántas quejas hubo en total?"
 python main.py "¿Qué sucursales debería visitar esta semana?"
 make eval                                 # preguntas de ejemplo + propias, 3 repeticiones
@@ -29,6 +30,20 @@ python -m eval.evaluar eval/preguntas_ejemplo.jsonl eval/preguntas_propias.jsonl
 Imprime una tabla por pregunta y deja `reportes/reporte.{json,md}` (más una copia con fecha y hora).
 Una pregunta cuenta como acertada si acierta en la mayoría de las repeticiones. `--umbral` hace que el
 proceso salga con error si la tasa de aciertos queda por debajo (pensado para CI).
+
+### Con Docker (alternativa)
+
+La imagen instala exactamente las versiones de `uv.lock` (`uv sync --frozen`), corre como usuario sin
+privilegios y recibe la clave por variable de entorno (nunca queda dentro de la imagen).
+
+```bash
+make docker-test                          # build de la etapa de tests: corre la suite offline
+make docker-build                         # imagen final
+make docker-ask Q="¿Qué sucursales debería visitar esta semana?"   # usa --env-file .env
+make docker-eval REPS=1                   # deja el reporte en ./reportes
+```
+
+En `.env`, la clave va sin comillas (`ANTHROPIC_API_KEY=sk-ant-...`): `docker --env-file` no las saca.
 
 ## Proveedor y modelo
 
@@ -231,5 +246,6 @@ make test                          # usa uv run python
 make test PY=python                # con otro intérprete (por ejemplo, un venv ya activado)
 ```
 
-Corren offline: no necesitan clave ni red (los marcados `requiere_clave` se saltean si falta la clave).
+Corren offline: no necesitan clave ni red. Los marcados `requiere_clave` llaman al modelo real y se
+saltean siempre, aunque haya una clave en `.env`, salvo que se pidan con `make test-clave`.
 CI los corre en cada push (`.github/workflows/tests.yml`).

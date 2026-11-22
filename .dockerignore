@@ -1,0 +1,13 @@
+.git
+.github
+.env
+.venv
+.venv-vm
+.wheels
+.worktrees
+data_raw
+reportes
+**/__pycache__
+.pytest_cache
+.ruff_cache
+.DS_Store
