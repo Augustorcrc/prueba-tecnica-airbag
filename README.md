@@ -6,6 +6,9 @@ quejas, sucursales y capacitaciones, y recomienda qué sucursales visitar. Prueb
 
 ## Cómo correrlo
 
+Requisito: [uv](https://docs.astral.sh/uv/) (`brew install uv` o
+`curl -LsSf https://astral.sh/uv/install.sh | sh`). uv se baja Python 3.11 si no está instalado.
+
 ```bash
 uv sync                                   # crea .venv e instala dependencias (Python >= 3.11)
 cp .env.example .env                      # y completo ANTHROPIC_API_KEY
