@@ -54,6 +54,11 @@ make ask Q="¿Qué sucursales debería visitar esta semana?"   # pide recomendac
 
 `make ask` es lo mismo que `uv run python main.py "pregunta"`.
 
+Para ver la salida sin correr nada, hay dos ejemplos estáticos en `reportes/`:
+`ejemplo_recomendaciones.json` (la respuesta a "¿Qué sucursales debería visitar esta semana?") y
+`ejemplo_evaluacion.md` (un `make eval` con 1 repetición). El resto de `reportes/` se genera en cada
+corrida y no se versiona.
+
 **Evals.** Corren el agente sobre un conjunto de preguntas con respuesta esperada y comparan:
 
 ```bash

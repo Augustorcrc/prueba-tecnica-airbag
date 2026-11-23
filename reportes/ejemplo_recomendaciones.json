@@ -1,0 +1,32 @@
+[
+  {
+    "sucursal_id": "S056",
+    "motivo": "Tuvo 44,7 quejas más que las esperables para la región Centro en las últimas 4 semanas, sobre todo en demora y pedido incorrecto, y la tasa viene en aumento.",
+    "evidencia": "Últimas 4 semanas (2026-03-02 a 2026-03-29): 4,18 quejas cada 1.000 pedidos, 1,98 veces la de la región Centro (2,11). 90 quejas sobre 21528 pedidos: 44,7 más que las 45,3 esperables con la tasa de su región. Frente a las 4 semanas anteriores subió de 2,9 a 4,18 (+44 %). Lo que más se aparta de su región: demora (29 quejas vs 13,1 esperables) y pedido incorrecto (25 quejas vs 11,9 esperables).",
+    "accion_sugerida": "Revisar dotación y tiempos de preparación en horas pico; además, revisar el proceso de toma y armado de pedidos."
+  },
+  {
+    "sucursal_id": "S024",
+    "motivo": "Tuvo 21,8 quejas más que las esperables para la región Centro en las últimas 4 semanas, sobre todo en limpieza y demora. La tasa sigue subiendo pese a la capacitación del 2026-02-09.",
+    "evidencia": "Últimas 4 semanas (2026-03-02 a 2026-03-29): 4,17 quejas cada 1.000 pedidos, 1,98 veces la de la región Centro (2,11). 44 quejas sobre 10552 pedidos: 21,8 más que las 22,2 esperables con la tasa de su región. Frente a las 4 semanas anteriores subió de 2,83 a 4,17 (+47 %). Lo que más se aparta de su región: limpieza (9 quejas vs 2,3 esperables) y demora (11 quejas vs 6,4 esperables). Capacitada el 2026-02-09.",
+    "accion_sugerida": "Escalar: auditoría de limpieza de baños y salón; además, revisar dotación y tiempos de preparación en horas pico."
+  },
+  {
+    "sucursal_id": "S107",
+    "motivo": "Tuvo 15 quejas más que las esperables para la región Norte en las últimas 4 semanas, sobre todo en demora y calidad de producto, aunque la tasa viene bajando.",
+    "evidencia": "Últimas 4 semanas (2026-03-02 a 2026-03-29): 3,29 quejas cada 1.000 pedidos, 1,94 veces la de la región Norte (1,7). 31 quejas sobre 9413 pedidos: 15,0 más que las 16,0 esperables con la tasa de su región. Frente a las 4 semanas anteriores bajó de 4,35 a 3,29 (-24 %). Lo que más se aparta de su región: demora (14 quejas vs 6,6 esperables) y calidad de producto (6 quejas vs 3,0 esperables).",
+    "accion_sugerida": "Seguimiento: revisar dotación y tiempos de preparación en horas pico; además, control de calidad de insumos y recetas."
+  },
+  {
+    "sucursal_id": "S053",
+    "motivo": "Tuvo 13,8 quejas más que las esperables para la región Sur en las últimas 4 semanas, sobre todo en demora y pedido incorrecto, y la tasa viene en aumento.",
+    "evidencia": "Últimas 4 semanas (2026-03-02 a 2026-03-29): 3,07 quejas cada 1.000 pedidos, 1,76 veces la de la región Sur (1,75). 32 quejas sobre 10410 pedidos: 13,8 más que las 18,2 esperables con la tasa de su región. Frente a las 4 semanas anteriores subió de 1,8 a 3,07 (+71 %). Lo que más se aparta de su región: demora (11 quejas vs 5,4 esperables) y pedido incorrecto (9 quejas vs 4,7 esperables).",
+    "accion_sugerida": "Revisar dotación y tiempos de preparación en horas pico; además, revisar el proceso de toma y armado de pedidos."
+  },
+  {
+    "sucursal_id": "S045",
+    "motivo": "Tuvo 13,7 quejas más que las esperables para la región Centro en las últimas 4 semanas, sobre todo en demora y pedido incorrecto, y la tasa viene en fuerte aumento.",
+    "evidencia": "Últimas 4 semanas (2026-03-02 a 2026-03-29): 3,46 quejas cada 1.000 pedidos, 1,64 veces la de la región Centro (2,11). 35 quejas sobre 10102 pedidos: 13,7 más que las 21,3 esperables con la tasa de su región. Frente a las 4 semanas anteriores subió de 1,25 a 3,46 (+178 %). Lo que más se aparta de su región: demora (13 quejas vs 6,1 esperables) y pedido incorrecto (11 quejas vs 5,6 esperables).",
+    "accion_sugerida": "Revisar dotación y tiempos de preparación en horas pico; además, revisar el proceso de toma y armado de pedidos."
+  }
+]
