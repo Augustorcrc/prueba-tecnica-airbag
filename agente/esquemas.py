@@ -6,13 +6,30 @@
 
 from __future__ import annotations
 
+import re
 from typing import Literal, Optional, Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 TipoRespuesta = Literal["dato", "recomendaciones"]
 TipoValor = Literal["numero", "texto", "lista", "ninguno"]
 Valor = Optional[Union[float, str, list[str]]]
+
+# Número en el formato que el schema le pide al modelo para `valor`: punto decimal y sin separador de
+# miles ("2.266", "442", "-0.29"). El modelo suele mandarlo como string.
+_RE_NUMERO_SIMPLE = re.compile(r"[-−]?\d+(?:\.\d+)?")
+
+
+def numero_simple(texto: str) -> Optional[float]:
+    """`float` si `texto` es un número en formato simple (punto decimal, sin miles); si no, None.
+
+    "2.266" es 2.266 y no 2266: en `valor` no hay separador de miles. La regla de miles de los textos
+    libres (`eval/comparadores.py`) no se aplica acá.
+    """
+    t = texto.strip()
+    if not _RE_NUMERO_SIMPLE.fullmatch(t):
+        return None
+    return float(t.replace("−", "-"))
 
 
 class ItemRecomendacion(BaseModel):
@@ -46,6 +63,15 @@ class RespuestaFinal(BaseModel):
     recomendaciones: Optional[list[ItemRecomendacion]] = Field(
         default=None, description="Solo si tipo_respuesta = recomendaciones."
     )
+
+    @model_validator(mode="after")
+    def _valor_numerico_como_numero(self) -> "RespuestaFinal":
+        """Con `tipo_valor="numero"`, un `valor` que llega como string numérico ("2.266") pasa a float."""
+        if self.tipo_valor == "numero" and isinstance(self.valor, str):
+            numero = numero_simple(self.valor)
+            if numero is not None:
+                self.valor = numero
+        return self
 
 
 class Respuesta(BaseModel):

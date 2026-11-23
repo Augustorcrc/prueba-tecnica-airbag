@@ -17,7 +17,8 @@ Reglas documentadas:
   Las fechas ISO (`2026-02-09`) y los IDs (`S012`) no se leen como números.
   Si el texto tiene varios números se toma **el primero que aparece** (no el más cercano a la
   esperada, que sería hacer trampa). Por eso el `valor` estructurado tiene prioridad: si el agente
-  lo llena, el texto no se mira.
+  lo llena, el texto no se mira. En `valor` la regla de miles no se aplica si viene en el formato
+  que pide el schema (punto decimal, sin miles): `"2.266"` es 2.266, no 2266.
 - **Listas.** IDs `S\\d{3}` en orden de aparición, sin duplicados. Igualdad exacta y en el mismo
   orden tras normalizar mayúsculas/espacios.
 - **Texto.** Se normaliza (minúsculas, sin tildes, sin puntuación, `_` como espacio, espacios
@@ -58,7 +59,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
-from agente.esquemas import Respuesta
+from agente.esquemas import Respuesta, numero_simple
 
 TIPOS_VALIDOS = ("numero", "texto", "lista")
 EPSILON = 1e-9
@@ -184,11 +185,17 @@ def texto_de(respuesta: Respuesta) -> str:
 
 
 def valor_numerico(valor: Any) -> Optional[float]:
-    """Normaliza `respuesta.valor` a número, o None si no sirve."""
+    """Normaliza `respuesta.valor` a número, o None si no sirve.
+
+    Un string con formato simple (punto decimal, sin miles, como pide el schema) se lee directo:
+    "2.266" es 2.266. La regla de miles del texto libre se usa solo si `valor` trae otra cosa
+    ("2,15", "1.000 pedidos").
+    """
     if _es_numero(valor):
         return float(valor)
     if isinstance(valor, str):
-        return parsear_numero(valor)
+        numero = numero_simple(valor)
+        return numero if numero is not None else parsear_numero(valor)
     return None
 
 

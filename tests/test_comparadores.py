@@ -52,6 +52,26 @@ def test_numero_usa_valor_antes_que_texto():
     assert r.ok and r.metodo == "valor"
 
 
+@pytest.mark.parametrize(
+    "valor, esperado",
+    [("2.266", 2.266), ("2.1468", 2.1468), ("442", 442), ("-0.29", -0.29), ("−0.29", -0.29), (" 30 ", 30),
+     ("3246856", 3246856), ("1.000 pedidos", 1000), ("2,15", 2.15)],
+)
+def test_valor_string_simple_se_lee_sin_regla_de_miles(valor, esperado):
+    """En `valor` va punto decimal sin miles (lo pide el schema): "2.266" es 2.266, no 2266.
+
+    Si `valor` trae otra cosa ("1.000 pedidos", "2,15"), se usa el parser del texto libre.
+    """
+    assert c.valor_numerico(valor) == pytest.approx(esperado)
+
+
+def test_r03v_tasa_con_tres_decimales_en_valor():
+    """Caso del eval de robustez del 2026-11-23: el agente respondió bien y el comparador leía 2266."""
+    texto = "La tasa de quejas de la región Costa es de 2,266 por cada 1.000 pedidos."
+    r = c.comparar(resp(texto, valor="2.266", tipo_valor="numero"), item(2.27, "numero", 0.01))
+    assert r.ok and r.metodo == "valor" and r.obtenida == pytest.approx(2.266)
+
+
 def test_numero_respaldo_texto():
     r = c.comparar(resp("La tasa es de 2,16 quejas por cada 1.000 pedidos."), item(2.15, "numero", 0.01))
     assert r.ok and r.metodo == "texto" and r.obtenida == pytest.approx(2.16)
