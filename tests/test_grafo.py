@@ -70,7 +70,7 @@ def test_camino_feliz_acumula_uso_pasos_y_llamadas():
     )
     assert salida["respuesta"] == RespuestaFinal(tipo_respuesta="dato", texto="Hubo 137 quejas.", valor=137, tipo_valor="numero")
     assert salida["pasos"] == 2
-    assert salida["uso"] == {"tokens_entrada": 200, "tokens_salida": 40}
+    assert salida["uso"] == {"tokens_entrada": 200, "tokens_salida": 40, "tokens_cache_lectura": 0, "tokens_cache_escritura": 0}
     assert salida["llamadas"][0]["herramienta"] == "contar_quejas_stub"
     assert salida["llamadas"][0]["args"] == {"region": "Norte"}
     assert salida["llamadas"][0]["resultado"]["resultado"]["quejas"] == 137

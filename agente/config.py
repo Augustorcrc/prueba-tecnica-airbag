@@ -44,6 +44,10 @@ PRECIOS_USD_POR_MTOK: dict[str, dict[str, float]] = {
     "claude-sonnet-5-5": {"entrada": 2.00, "salida": 10.00},
     "claude-haiku-5-5": {"entrada": 0.10, "salida": 0.50},
 }
+# Prompt caching de Anthropic (TTL de 5 minutos): leer del cache cuesta 0,1× el precio de entrada y
+# escribirlo, 1,25×.
+FACTOR_CACHE_LECTURA = 0.10
+FACTOR_CACHE_ESCRITURA = 1.25
 
 
 class FaltaVariableDeEntorno(RuntimeError):
@@ -110,10 +114,18 @@ def variable_clave_para(modelo: str) -> str:
     )
 
 
-def costo_usd(modelo: str, tokens_entrada: int, tokens_salida: int) -> float | None:
-    """Costo estimado en USD; None si el modelo no está en la tabla."""
+def costo_usd(modelo: str, tokens_entrada: int, tokens_salida: int, *,
+              tokens_cache_lectura: int = 0, tokens_cache_escritura: int = 0) -> float | None:
+    """Costo estimado en USD; None si el modelo no está en la tabla.
+
+    `tokens_entrada` es el total de entrada, incluidos los tokens leídos o escritos en el cache (como lo
+    informa `usage_metadata`); esos se cobran con `FACTOR_CACHE_LECTURA` y `FACTOR_CACHE_ESCRITURA`.
+    """
     nombre = modelo.split(":", 1)[-1]
     precios = PRECIOS_USD_POR_MTOK.get(nombre)
     if precios is None:
         return None
-    return (tokens_entrada * precios["entrada"] + tokens_salida * precios["salida"]) / 1_000_000
+    sin_cache = max(tokens_entrada - tokens_cache_lectura - tokens_cache_escritura, 0)
+    entrada = (sin_cache + tokens_cache_lectura * FACTOR_CACHE_LECTURA
+               + tokens_cache_escritura * FACTOR_CACHE_ESCRITURA)
+    return (entrada * precios["entrada"] + tokens_salida * precios["salida"]) / 1_000_000

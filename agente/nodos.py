@@ -20,7 +20,7 @@ from pydantic import ValidationError
 
 from agente.config import MAX_PASOS
 from agente.esquemas import ItemRecomendacion, RespuestaFinal
-from agente.estado import Estado
+from agente.estado import Estado, sumar_uso, uso_de_mensaje
 
 NOMBRE_FINAL = RespuestaFinal.__name__  # "RespuestaFinal"
 
@@ -80,12 +80,7 @@ def crear_nodo_modelo(modelo_ligado: Any) -> Callable[[Estado], dict]:
 
     def modelo(estado: Estado) -> dict:
         mensaje = modelo_ligado.invoke(estado["messages"])
-        uso_previo = estado.get("uso") or {}
-        metadatos = getattr(mensaje, "usage_metadata", None) or {}
-        uso = {
-            "tokens_entrada": int(uso_previo.get("tokens_entrada", 0)) + int(metadatos.get("input_tokens", 0) or 0),
-            "tokens_salida": int(uso_previo.get("tokens_salida", 0)) + int(metadatos.get("output_tokens", 0) or 0),
-        }
+        uso = sumar_uso(estado.get("uso"), uso_de_mensaje(mensaje))
         return {"messages": [mensaje], "pasos": int(estado.get("pasos", 0)) + 1, "uso": uso}
 
     return modelo

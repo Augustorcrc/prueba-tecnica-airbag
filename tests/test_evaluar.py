@@ -213,7 +213,8 @@ def test_costo_y_tokens_por_pregunta_no_se_multiplican_por_repeticiones(tmp_path
     assert pp["costo_usd"] == pytest.approx(0.01)
     assert pp["latencia_media_s"] == pytest.approx(2.0) and pp["latencia_p95_s"] == pytest.approx(2.9)
     assert pp["corridas_respondidas"] == 2
-    assert s["agente"] == {"tokens_entrada": 2000, "tokens_salida": 200, "costo_usd": pytest.approx(0.02)}
+    assert s["agente"] == {"tokens_entrada": 2000, "tokens_salida": 200, "tokens_cache_lectura": 0,
+                           "costo_usd": pytest.approx(0.02)}
     assert s["juez"]["tokens_entrada"] == 0 and s["juez"]["costo_usd"] is None
     r = res["resultados"][0]
     assert r["tokens_medios_por_corrida"] == 1100 and r["costo_medio_por_corrida_usd"] == pytest.approx(0.01)

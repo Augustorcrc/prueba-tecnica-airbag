@@ -147,7 +147,9 @@ def _costo_agente(traza: dict) -> Optional[float]:
     if modelo and uso:
         from agente.config import costo_usd
 
-        return costo_usd(modelo, int(uso.get("tokens_entrada", 0)), int(uso.get("tokens_salida", 0)))
+        return costo_usd(modelo, int(uso.get("tokens_entrada", 0)), int(uso.get("tokens_salida", 0)),
+                         tokens_cache_lectura=int(uso.get("tokens_cache_lectura", 0) or 0),
+                         tokens_cache_escritura=int(uso.get("tokens_cache_escritura", 0) or 0))
     return None
 
 
@@ -161,7 +163,7 @@ def _una_corrida(item: dict, k: int, responder, usar_juez: bool, juez, reintento
         corrida.update(
             ok=False, obtenida=None, metodo="error", motivo="excepción en responder()",
             error=f"{type(e).__name__}: {e}", latencia_s=time.perf_counter() - inicio,
-            tokens_entrada=0, tokens_salida=0, costo_usd=None, juez={}, texto=None,
+            tokens_entrada=0, tokens_salida=0, tokens_cache_lectura=0, costo_usd=None, juez={}, texto=None,
         )
         return corrida
     medida = time.perf_counter() - inicio
@@ -178,6 +180,7 @@ def _una_corrida(item: dict, k: int, responder, usar_juez: bool, juez, reintento
         latencia_s=float(traza.get("latencia_s", medida)),
         tokens_entrada=int(uso.get("tokens_entrada", 0) or 0),
         tokens_salida=int(uso.get("tokens_salida", 0) or 0),
+        tokens_cache_lectura=int(uso.get("tokens_cache_lectura", 0) or 0),
         costo_usd=_costo_agente(traza), juez=uso_juez or {},
         texto=respuesta.texto, valor=_a_jsonable(respuesta.valor),
         advertencias=traza.get("advertencias") or [],
@@ -223,6 +226,7 @@ def _resultado_pregunta(item: dict, corridas: list[dict]) -> dict:
         "errores": errores,
         "tokens_entrada": sum(c["tokens_entrada"] for c in corridas),
         "tokens_salida": sum(c["tokens_salida"] for c in corridas),
+        "tokens_cache_lectura": sum(c.get("tokens_cache_lectura", 0) for c in corridas),
         "costo_usd": _sumar_costos([c["costo_usd"] for c in corridas]),
         # medias por corrida (= pregunta respondida una vez), solo del agente y sin corridas con excepción
         "corridas_respondidas": len(respondidas),
@@ -273,6 +277,7 @@ def resumir(resultados: list[dict]) -> dict:
     re_s = sum(c["tokens_salida"] for c in respondidas)
     t_e = sum(r["tokens_entrada"] for r in resultados)
     t_s = sum(r["tokens_salida"] for r in resultados)
+    t_cache = sum(r.get("tokens_cache_lectura", 0) for r in resultados)
     jt_e = sum(r["juez_tokens_entrada"] for r in resultados)
     jt_s = sum(r["juez_tokens_salida"] for r in resultados)
     costo_agente = _sumar_costos([r["costo_usd"] for r in resultados])
@@ -301,7 +306,8 @@ def resumir(resultados: list[dict]) -> dict:
         "costo_agente_usd": costo_agente,
         "costo_juez_usd": costo_juez,
         "costo_total_usd": costo_total,
-        "agente": {"tokens_entrada": t_e, "tokens_salida": t_s, "costo_usd": costo_agente},
+        "agente": {"tokens_entrada": t_e, "tokens_salida": t_s, "tokens_cache_lectura": t_cache,
+                   "costo_usd": costo_agente},
         "juez": {"tokens_entrada": jt_e, "tokens_salida": jt_s, "costo_usd": costo_juez},
         # Promedio por corrida respondida (= una pregunta respondida una vez), solo del agente: no se
         # multiplica por las repeticiones ni mezcla el costo del juez.
@@ -437,8 +443,9 @@ def lineas_resumen(resumen: dict) -> list[str]:
         f"Consistencia: {s['consistentes']}/{s['preguntas']} ({s['tasa_consistencia']:.0%})",
         f"Corridas con error: {s['corridas_con_error']} de {s['corridas']}",
         f"Latencia media: {_fmt(s['latencia_media_s'])} s · p95: {_fmt(s['latencia_p95_s'])} s",
-        f"Agente: {s['agente']['tokens_entrada']} tokens de entrada · {s['agente']['tokens_salida']} de salida"
-        f" · {_fmt(s['agente']['costo_usd'], 4, 'US$')}",
+        f"Agente: {s['agente']['tokens_entrada']} tokens de entrada"
+        f" ({s['agente'].get('tokens_cache_lectura', 0)} leídos del cache)"
+        f" · {s['agente']['tokens_salida']} de salida · {_fmt(s['agente']['costo_usd'], 4, 'US$')}",
         f"Juez: {s['juez']['tokens_entrada']} tokens de entrada · {s['juez']['tokens_salida']} de salida"
         f" · {_fmt(s['juez']['costo_usd'], 4, 'US$')}",
         f"Costo total (agente + juez): {_fmt(s['costo_total_usd'], 4, 'US$')}",

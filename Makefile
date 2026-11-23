@@ -3,6 +3,9 @@
 # PY se puede sobrescribir, por ejemplo: make test PY=python (con un venv ya activado)
 PY ?= uv run python
 REPS ?= 3
+# Corridas del eval en paralelo (hilos). Con 1 es secuencial; si la clave tiene un límite de tasa bajo y
+# aparecen muchos 429, bajarlo (el eval reintenta con backoff igual).
+PARALELO ?= 3
 
 instalar:
 	uv sync
@@ -15,10 +18,10 @@ test-clave:
 	PRUEBAS_CON_CLAVE=1 $(PY) -m pytest -m requiere_clave
 
 eval:
-	$(PY) -m eval.evaluar eval/preguntas_ejemplo.jsonl eval/preguntas_propias.jsonl --repeticiones $(REPS) --salida reportes/
+	$(PY) -m eval.evaluar eval/preguntas_ejemplo.jsonl eval/preguntas_propias.jsonl --repeticiones $(REPS) --paralelo $(PARALELO) --salida reportes/
 
 eval-robustez:
-	$(PY) -m eval.evaluar eval/preguntas_robustez.jsonl --repeticiones $(REPS) --salida reportes/robustez/
+	$(PY) -m eval.evaluar eval/preguntas_robustez.jsonl --repeticiones $(REPS) --paralelo $(PARALELO) --salida reportes/robustez/
 
 ask:
 	$(PY) main.py "$(Q)"
@@ -43,4 +46,4 @@ docker-ask:
 
 docker-eval:
 	docker run --rm --env-file .env -v "$(CURDIR)/reportes:/app/reportes" --entrypoint python $(IMAGEN) \
-		-m eval.evaluar eval/preguntas_ejemplo.jsonl eval/preguntas_propias.jsonl --repeticiones $(REPS) --salida reportes/
+		-m eval.evaluar eval/preguntas_ejemplo.jsonl eval/preguntas_propias.jsonl --repeticiones $(REPS) --paralelo $(PARALELO) --salida reportes/

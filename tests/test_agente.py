@@ -144,7 +144,7 @@ def test_p01_guionado_ok_y_traza_completa(datos, trazas_tmp):
     assert r.traza["verificacion"]["ok"] is True
     assert r.traza["advertencias"] == []
     assert r.traza["pasos"] == 2
-    assert r.traza["uso"] == {"tokens_entrada": 200, "tokens_salida": 40}
+    assert r.traza["uso"] == {"tokens_entrada": 200, "tokens_salida": 40, "tokens_cache_lectura": 0, "tokens_cache_escritura": 0}
     assert r.traza["llamadas"][0]["herramienta"] == "buscar_sucursales"
     assert r.traza["llamadas"][0]["args"] == {"region": "Costa"}
     # el modelo recibió el system prompt real

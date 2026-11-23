@@ -42,7 +42,7 @@ from agente.config import (
 )
 from agente.datos import CATEGORIAS, REGIONES
 from agente.esquemas import ItemRecomendacion, Respuesta, RespuestaFinal
-from agente.estado import estado_inicial
+from agente.estado import estado_inicial, sumar_uso
 from agente.grafo import config_invocacion, construir_grafo
 from agente.herramientas_lc import crear_herramientas
 from agente.prompts import SYSTEM_PROMPT
@@ -59,6 +59,7 @@ NOMBRE_CANDIDATOS = "candidatos_visita"
 
 _cache_datos: "Datos | None" = None
 _candado = threading.Lock()
+_candado_trazas = threading.Lock()  # el eval con --paralelo escribe trazas desde varios hilos
 
 
 # --------------------------------------------------------------------------- datos y modelo
@@ -94,6 +95,19 @@ def crear_modelo() -> "BaseChatModel":
     from langchain.chat_models import init_chat_model
 
     return init_chat_model(nombre, **kwargs_modelo(nombre))
+
+
+def mensaje_sistema(nombre_modelo: str) -> SystemMessage:
+    """System prompt. En modelos de Anthropic lleva un breakpoint de prompt caching.
+
+    Anthropic arma el prefijo en el orden tools → system → mensajes, así que el breakpoint al final del
+    system cubre también los schemas de las herramientas (~12k tokens por llamada, iguales en todas las
+    preguntas). La segunda llamada de cada pregunta, y las preguntas siguientes dentro de los 5 minutos,
+    lo leen del cache. Con otros proveedores (o los modelos falsos de los tests) va como texto plano.
+    """
+    if nombre_modelo.split(":", 1)[-1].startswith("claude"):
+        return SystemMessage([{"type": "text", "text": SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}])
+    return SystemMessage(SYSTEM_PROMPT)
 
 
 def _nombre_modelo(modelo: Any) -> str:
@@ -514,8 +528,9 @@ def guardar_traza(traza: dict) -> Path | None:
         carpeta = trazas_dir()
         carpeta.mkdir(parents=True, exist_ok=True)
         ruta = carpeta / f"{datetime.now():%Y%m%d}.jsonl"
-        with ruta.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(traza, ensure_ascii=False, default=str) + "\n")
+        linea = json.dumps(traza, ensure_ascii=False, default=str) + "\n"
+        with _candado_trazas, ruta.open("a", encoding="utf-8") as f:
+            f.write(linea)
         return ruta
     except Exception:  # noqa: BLE001  (la traza nunca rompe una respuesta)
         return None
@@ -572,7 +587,7 @@ def responder(
             completar_recomendaciones=hook,
             tool_choice=tool_choice,
         )
-        mensajes = [SystemMessage(SYSTEM_PROMPT), *(historial or []), HumanMessage(pregunta)]
+        mensajes = [mensaje_sistema(nombre_modelo), *(historial or []), HumanMessage(pregunta)]
         inicial = estado_inicial(pregunta, mensajes)
         n_previas = len(llamadas_previas or [])
         inicial["llamadas"] = list(llamadas_previas or [])
@@ -619,10 +634,12 @@ def responder(
         uso = {}
         traza.update(pasos=None, llamadas=[], verificacion=None, advertencias=advertencias, error=detalle)
 
-    uso = {"tokens_entrada": int(uso.get("tokens_entrada", 0)), "tokens_salida": int(uso.get("tokens_salida", 0))}
+    uso = sumar_uso(uso, None)
     traza["latencia_s"] = round(time.perf_counter() - inicio, 3)
     traza["uso"] = uso
-    traza["costo_usd"] = costo_usd(nombre_modelo, uso["tokens_entrada"], uso["tokens_salida"])
+    traza["costo_usd"] = costo_usd(nombre_modelo, uso["tokens_entrada"], uso["tokens_salida"],
+                                   tokens_cache_lectura=uso["tokens_cache_lectura"],
+                                   tokens_cache_escritura=uso["tokens_cache_escritura"])
     respuesta.traza = traza
     guardar_traza({"fecha": datetime.now().isoformat(timespec="seconds"), **traza})
     return respuesta

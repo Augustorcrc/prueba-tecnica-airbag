@@ -116,3 +116,22 @@ def test_helpers_de_config(nombre, temperatura, forzado):
     assert kw["max_retries"] == 2 and kw["timeout"] > 0
     assert soporta_tool_choice_forzado(nombre) is forzado
     assert tool_choice_para(nombre) == ("any" if forzado else "auto")
+
+
+def test_system_prompt_con_breakpoint_de_cache(monkeypatch, datos):
+    """El system viaja como bloque con `cache_control`: el cache cubre tools + system (prompt caching)."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-falsa")
+    monkeypatch.setenv("MODELO_LLM", "anthropic:claude-sonnet-5-5")
+    modelo = modulo_agente.crear_modelo()
+    espia = _Espia(modelo)
+    construir_grafo(espia, crear_herramientas(datos))
+    ligado = espia.ligado
+    mensajes = [modulo_agente.mensaje_sistema(modelo.model), HumanMessage("¿Cuántas sucursales tiene Costa?")]
+    payload = ligado.bound._get_request_payload(mensajes, **ligado.kwargs)
+    assert payload["system"] == [{"type": "text", "text": SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}]
+    assert len(payload["tools"]) == len(HERRAMIENTAS) + 1
+
+
+def test_system_prompt_sin_cache_fuera_de_anthropic():
+    assert modulo_agente.mensaje_sistema("openai:gpt-x").content == SYSTEM_PROMPT
+    assert modulo_agente.mensaje_sistema("ModeloFalso").content == SYSTEM_PROMPT
