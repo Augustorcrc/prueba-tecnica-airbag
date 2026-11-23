@@ -189,8 +189,15 @@ def crear_nodo_verificar(
     return verificar
 
 
-def texto_feedback(verificacion: dict) -> str:
-    """Mensaje que se le devuelve al modelo cuando la verificación falla."""
+INSTRUCCION_FEEDBACK = (
+    "Volvé a consultar y corregí: llamá de nuevo a RespuestaFinal con el texto reescrito, reemplazando cada "
+    "una de esas cifras por la que figura en el resultado de la herramienta (o sacándola). No vuelvas a "
+    "escribir la cifra incorrecta ni aclares la corrección en el texto."
+)
+
+
+def problemas_verificacion(verificacion: dict) -> str:
+    """Qué falló en la verificación, en una línea (para el feedback y para las advertencias)."""
     partes = []
     if verificacion.get("no_verificados"):
         cifras = ", ".join(str(c) for c in verificacion["no_verificados"])
@@ -199,7 +206,16 @@ def texto_feedback(verificacion: dict) -> str:
         partes.append("IDs inválidos: " + ", ".join(map(str, verificacion["ids_invalidos"])))
     if verificacion.get("ids_repetidos"):
         partes.append("IDs repetidos: " + ", ".join(map(str, verificacion["ids_repetidos"])))
-    return "; ".join(partes) + "; volvé a consultar y corregí."
+    return "; ".join(partes)
+
+
+def texto_feedback(verificacion: dict) -> str:
+    """Mensaje que se le devuelve al modelo cuando la verificación falla.
+
+    La instrucción pide reescribir sin la cifra: en el eval del 2026-11-23 (A04) el modelo respondió al
+    feedback con "S015 (4,3619 no; tasa 5,3619)", dejó la cifra mala y la respuesta salió con advertencia.
+    """
+    return problemas_verificacion(verificacion) + ". " + INSTRUCCION_FEEDBACK
 
 
 def feedback(estado: Estado) -> dict:
@@ -244,7 +260,7 @@ def _cerrar_dato(estado: Estado) -> dict:
     lineas += [f"⚠️ El ID {i} aparece repetido" for i in verificacion["ids_repetidos"]]
     texto = "\n".join([t for t in [respuesta.texto] if t] + lineas)
     advertencias = list(estado.get("advertencias") or []) + [
-        "Respuesta entregada sin verificar por completo: " + texto_feedback(verificacion)
+        "Respuesta entregada sin verificar por completo: " + problemas_verificacion(verificacion) + "."
     ]
     return {"respuesta": respuesta.model_copy(update={"texto": texto}), "advertencias": advertencias}
 

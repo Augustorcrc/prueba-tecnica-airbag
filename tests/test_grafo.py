@@ -108,7 +108,8 @@ def test_cifra_inventada_feedback_y_correccion():
     assert salida["pasos"] == 3
     feedback = modelo.recibidos[-1][-1]
     assert isinstance(feedback, ToolMessage)
-    assert "999" in feedback.content and "volvé a consultar y corregí" in feedback.content
+    assert "999" in feedback.content and "Volvé a consultar y corregí" in feedback.content
+    assert "No vuelvas a escribir la cifra incorrecta" in feedback.content
 
 
 def test_cifra_inventada_dos_veces_cierra_con_advertencia():
