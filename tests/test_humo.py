@@ -1,6 +1,7 @@
 """Test de humo: los módulos de los contratos se importan y la config funciona sin clave."""
 
 import importlib
+from pathlib import Path
 
 import pytest
 
@@ -50,7 +51,8 @@ def test_main_datos_inexistentes_error_claro_codigo_1(monkeypatch, capsys):
     monkeypatch.setattr(ag, "_cache_datos", None)
     assert main.main(["hola"]) == 1
     err = capsys.readouterr().err
-    assert err.startswith("Error: No pude cargar los datos de /nonexistent")
+    # Path normaliza el separador según la plataforma (en Windows queda "\\nonexistent").
+    assert err.startswith(f"Error: No pude cargar los datos de {Path('/nonexistent')}")
     assert "límite de tasa" not in err
 
 
