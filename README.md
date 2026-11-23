@@ -4,47 +4,127 @@ Asistente en español para el gerente regional de Café Tostadero: responde preg
 quejas, sucursales y capacitaciones, y recomienda qué sucursales visitar. Prueba técnica de Airbag
 (ML Engineer). Lo escribí en Python con LangGraph, DuckDB y pandas.
 
-## Cómo correrlo
+## Cómo correrlo (macOS)
 
-Requisito: [uv](https://docs.astral.sh/uv/) (`brew install uv` o
-`curl -LsSf https://astral.sh/uv/install.sh | sh`). uv se baja Python 3.11 si no está instalado.
+Son cuatro pasos. Los dos primeros no necesitan clave ni red; el 3 y el 4 llaman al modelo.
+
+### 1. Setup (obligatorio)
+
+Requisitos: [uv](https://docs.astral.sh/uv/) y, solo para los pasos 3 y 4, una clave de la API de
+Anthropic. No hace falta instalar Python: uv baja Python 3.11 si no está.
 
 ```bash
-uv sync                                   # crea .venv e instala dependencias (Python >= 3.11)
-cp .env.example .env                      # y completo ANTHROPIC_API_KEY
-make test                                 # tests offline, no necesitan clave ni red
-make test-clave                           # tests contra el modelo real (gastan créditos)
-make ask Q="¿Cuántas quejas hubo en total?"
-make chat                                 # opcional: conversación con memoria (/nuevo, /salir)
-python main.py "¿Qué sucursales debería visitar esta semana?"
-make eval                                 # preguntas de ejemplo + propias, 3 repeticiones
+brew install uv                           # o: curl -LsSf https://astral.sh/uv/install.sh | sh
+uv --version                              # comprobar que quedó instalado
+
+git clone https://github.com/Augustorcrc/prueba-tecnica-airbag.git
+cd prueba-tecnica-airbag
+uv sync                                   # crea .venv con las versiones exactas de uv.lock
+cp .env.example .env                      # y completar ANTHROPIC_API_KEY
 ```
 
-La clave se lee solo de `ANTHROPIC_API_KEY` (variable de entorno o `.env`, que está en `.gitignore`).
-Si falta, el CLI dice qué variable exportar. Variables opcionales en `.env.example`: `MODELO_LLM`,
-`MODELO_JUEZ`, `DATOS_DIR`.
+En `.env`, la clave va sin comillas (`ANTHROPIC_API_KEY=sk-ant-...`). La clave se lee solo de
+`ANTHROPIC_API_KEY` (variable de entorno o `.env`, que está en `.gitignore`); si falta, el CLI dice qué
+variable exportar. Variables opcionales: `MODELO_LLM`, `MODELO_JUEZ` y `DATOS_DIR`.
 
-El eval también se corre directo:
+### 2. Tests (sin clave ni red)
 
 ```bash
-python -m eval.evaluar eval/preguntas_ejemplo.jsonl eval/preguntas_propias.jsonl \
+make test                                 # suite offline con un modelo falso
+```
+
+Tarda unos 10 segundos y debería terminar con **539 passed, 25 skipped**. Si da eso, el setup quedó bien.
+Los 25 salteados son los que llaman al modelo real.
+
+Opcionales:
+
+```bash
+make lint                                 # ruff
+make test-clave                           # los 25 tests contra el modelo real (necesita clave, gasta créditos)
+```
+
+### 3. Probar el agente (con clave)
+
+Una pregunta suelta:
+
+```bash
+make ask Q="¿Cuántas quejas hubo en total?"
+make ask Q="¿Qué sucursales debería visitar esta semana?"   # pide recomendaciones: devuelve solo JSON
+```
+
+`make ask` es lo mismo que `uv run python main.py "pregunta"`.
+
+**Evals.** Corren el agente sobre un conjunto de preguntas con respuesta esperada y comparan:
+
+```bash
+make eval                                 # preguntas de ejemplo (10) + propias (6), 3 repeticiones
+make eval REPS=1                          # una sola repetición: más rápido y más barato
+make eval-robustez                        # paráfrasis y preguntas adversariales (34)
+```
+
+- Imprime una tabla por pregunta y deja el reporte en `reportes/reporte.md` y `reportes/reporte.json`,
+  más una copia con fecha y hora. El de robustez queda en `reportes/robustez/`.
+- Una pregunta cuenta como acertada si acierta en la mayoría de las repeticiones.
+- **Costo estimado en la API de Anthropic** (se cobra a la cuenta de la clave): unos USD 0,05–0,08 por
+  pregunta con Sonnet 5.5, más centavos del juez (Haiku 5.5). `make eval` son 48 corridas (16 × 3), unos
+  USD 2,5–4; `make eval-robustez` son 102 (34 × 3), unos USD 5–8. Es una estimación previa: ver
+  [Costo y latencia](#costo-y-latencia).
+
+Para más control, el eval se corre directo:
+
+```bash
+uv run python -m eval.evaluar eval/preguntas_ejemplo.jsonl eval/preguntas_propias.jsonl \
   --repeticiones 3 --salida reportes/ [--sin-juez] [--paralelo N] [--umbral 0.8]
 ```
 
-Imprime una tabla por pregunta y deja `reportes/reporte.{json,md}` (más una copia con fecha y hora).
-Una pregunta cuenta como acertada si acierta en la mayoría de las repeticiones. `--umbral` hace que el
-proceso salga con error si la tasa de aciertos queda por debajo (pensado para CI).
+`--sin-juez` no usa el modelo juez (las respuestas de texto largo fallan), `--paralelo` corre varias
+preguntas a la vez y `--umbral` hace que el proceso salga con error si la tasa de aciertos queda por
+debajo (pensado para CI).
 
-### Modo chat (opcional)
+### 4. Modo chat (opcional, con clave)
 
-`make chat` (o `python main.py --chat [--traza]`) abre una conversación con memoria: "¿cuántas quejas tuvo
-el Sur en febrero?" y después "¿y en marzo?". Cada turno usa el mismo agente que una pregunta suelta,
-con dos agregados (`agente/chat.py`):
+```bash
+make chat                                 # o: uv run python main.py --chat [--traza]
+```
+
+Abre una conversación con memoria: "¿cuántas quejas tuvo el Sur en febrero?" y después "¿y en marzo?".
+Comandos: `/nuevo` borra la memoria y `/salir` (o Ctrl+D) termina. Cada turno usa el mismo agente que una
+pregunta suelta, con dos agregados (`agente/chat.py`):
 - el modelo ve las últimas 6 preguntas y respuestas (solo el texto final);
 - el verificador también acepta cifras que salieron de herramientas en turnos anteriores.
 
-La memoria dura lo que dura la sesión. El eval y `python main.py "pregunta"` no usan este modo y
-siguen tratando cada pregunta por separado.
+La memoria dura lo que dura la sesión. El eval y `make ask` no usan este modo: tratan cada pregunta por
+separado.
+
+### En Windows
+
+Los comandos de arriba son de macOS y Linux. El código no depende del sistema operativo, y la CI corre
+los tests offline en Linux y en Windows, pero `make` no viene instalado en Windows. Hay tres opciones:
+
+- **WSL2 (recomendada):** dentro de WSL todo este README funciona tal cual.
+- **Docker Desktop:** ver la sección siguiente.
+- **Nativo, en PowerShell:** se instala uv y se corren los comandos sin `make`.
+
+```powershell
+winget install astral-sh.uv               # o: powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+git clone https://github.com/Augustorcrc/prueba-tecnica-airbag.git
+cd prueba-tecnica-airbag
+uv sync
+Copy-Item .env.example .env               # y completar ANTHROPIC_API_KEY
+$env:PYTHONUTF8 = "1"                     # salida en UTF-8 aunque se redirija a un archivo
+```
+
+| Con make | En PowerShell |
+|---|---|
+| `make test` | `uv run python -m pytest` |
+| `make test-clave` | `$env:PRUEBAS_CON_CLAVE = "1"; uv run python -m pytest -m requiere_clave` |
+| `make ask Q="..."` | `uv run python main.py "..."` |
+| `make eval` | `uv run python -m eval.evaluar eval/preguntas_ejemplo.jsonl eval/preguntas_propias.jsonl --repeticiones 3 --salida reportes/` |
+| `make eval-robustez` | `uv run python -m eval.evaluar eval/preguntas_robustez.jsonl --repeticiones 3 --salida reportes/robustez/` |
+| `make chat` | `uv run python main.py --chat` |
+
+`PYTHONUTF8` evita un error de codificación con los acentos y la advertencia "⚠️" cuando la salida no va
+a la consola. `$env:` vale solo para esa ventana de PowerShell.
 
 ### Con Docker (alternativa)
 
@@ -58,7 +138,7 @@ make docker-ask Q="¿Qué sucursales debería visitar esta semana?"   # usa --en
 make docker-eval REPS=1                   # deja el reporte en ./reportes
 ```
 
-En `.env`, la clave va sin comillas (`ANTHROPIC_API_KEY=sk-ant-...`): `docker --env-file` no las saca.
+La clave va sin comillas en `.env` porque `docker --env-file` no las saca.
 
 ## Estructura del repo
 
@@ -142,8 +222,20 @@ Detalles:
 
 ## Decisiones de diseño
 
-**Capa de datos única** (`agente/datos.py`). Cargo y limpio los CSV una vez, en DuckDB en memoria + pandas.
-Todo lo demás consume esa capa; el LLM nunca ve los CSV.
+**Capa de datos única, en memoria** (`agente/datos.py`). En cada arranque, una sola función determinística,
+`cargar_datos()`, lee, valida y limpia los CSV, y deja los datos limpios en pandas y en vistas de DuckDB en
+memoria. Todo lo demás consume esa capa; el LLM nunca ve los CSV. Lo elegí así, y no un dataset curado en
+disco, por estos motivos:
+- Son ~17k filas y la carga tarda menos de 2 segundos. Guardar un intermedio no ahorra tiempo y suma el
+  riesgo de que quede desincronizado del código.
+- Los CSV no se modifican nunca y todo se reconstruye desde ellos: lo que documenta
+  `docs/curacion_datos.md` es exactamente lo que se ejecuta.
+- Las filas con problemas se marcan, no se borran ni se imputan. El valor crudo queda para auditar y no se
+  inventan pedidos.
+- Si los datos cambian (`DATOS_DIR`), las validaciones cortan la carga y muestran ejemplos de las filas que
+  fallan, en vez de devolver cifras mal sin avisar.
+- Es una decisión para esta escala. En producción, la curación pasa a un job que publica snapshots
+  validados (ver [Cómo lo serviría en producción](#cómo-lo-serviría-en-producción)).
 
 **Herramientas tipadas y genéricas** (`agente/herramientas.py`). En vez de una herramienta por pregunta,
 un catálogo chico que se combina:
@@ -193,10 +285,11 @@ graph TD;
 Elegí un grafo propio y no un agente prearmado para controlar la verificación, el reintento y el corte.
 
 **Recomendaciones** (`agente/recomendaciones.py`). El LLM no decide a quién visitar. Un score
-determinístico ordena las sucursales por tasa de quejas de las últimas 4 semanas / tasa de quejas de su región; entran las que
-superan 1,5× (de 3 a 5 sucursales). Si no llegan a 3, completo con las siguientes marcadas "Atención
-preventiva". El LLM solo redacta el motivo y la acción, y el JSON lo imprime el código con `json.dumps`
-(nunca el modelo). Toda pregunta que pida recomendaciones devuelve ese JSON.
+determinístico elige las sucursales cuya tasa de quejas de las últimas 4 semanas supera 1,5× la de su
+región y las ordena por exceso de quejas (quejas por encima de las esperables con la tasa de su región);
+devuelve de 3 a 5. Si no llegan a 3, completo con las siguientes marcadas "Atención preventiva". El LLM
+solo redacta el motivo y la acción, y el JSON lo imprime el código con `json.dumps` (nunca el modelo).
+Toda pregunta que pida recomendaciones devuelve ese JSON.
 
 **Fecha de referencia** 2026-03-29, el último día con datos: "esta semana" = 23 al 29 de marzo.
 
@@ -208,14 +301,15 @@ los CSV y tiene prohibido importar el agente, para no validar el código contra 
 1. Limpieza determinística en la capa de datos, antes de que el modelo vea nada.
 2. El modelo solo obtiene datos con las herramientas; el prompt le prohíbe hacer cálculos mentales
    (si necesita una cifra derivada, la pide a una herramienta).
-3. **Verificador** (`agente/verificador.py`): busca cada cifra del texto, del `valor` y de la evidencia
-   entre los números de los resultados de herramientas. Normaliza 2,15/2.15, separadores de miles y
+3. **Verificador** (`agente/verificador.py`): busca cada cifra del texto, del `valor` y del motivo de
+   cada recomendación entre los números de los resultados de herramientas. Normaliza 2,15/2.15, separadores de miles y
    porcentajes; ignora años, fechas, IDs y los números que ya estaban en la pregunta.
 4. Si hay cifras sin respaldo: un reintento con la lista de cifras; si persiste, advertencia visible.
 5. Los IDs de sucursal se validan contra la tabla.
 6. Las recomendaciones son JSON armado por el código. Si el modelo no termina, contesta en texto o
    inventa sucursales en una pregunta que pide recomendaciones, el JSON se arma de forma determinística
-   con `candidatos_visita`. Sus cifras salen del score, así que verifican por construcción.
+   con `candidatos_visita`. La evidencia de cada recomendación la arma siempre el código con las cifras
+   del score, así que verifica por construcción.
 
 Límite conocido: el verificador busca cada cifra entre *todos* los números de los resultados, así que
 un entero chico (3, 6, 13) puede pasar por coincidencia con un conteo. Protege bien contra cifras
@@ -249,8 +343,10 @@ pregunta. Si falta o no sirve, un parser lee el texto:
 
 **Textos.** Normalizo (minúsculas, sin tildes ni puntuación) y busco la esperada o sus palabras/tokens
 clave (números, fechas ISO, IDs, palabras de 4+ letras). Si la esperada es larga o no matchea, la decide
-un LLM juez (Haiku 5.5, temperatura 0) con una rúbrica cerrada: ¿contiene los hechos esperados?
-¿contradice alguno? Con `--sin-juez` esas corridas fallan con motivo "requiere juez".
+un LLM juez (Haiku 5.5) con una rúbrica cerrada: ¿contiene los hechos esperados?
+¿contradice alguno? Juzga hechos, no forma (la longitud o el detalle extra no restan), recibe el texto y
+el `valor` rotulados por separado y escribe su razón antes del veredicto, para que el sí/no salga del
+razonamiento. Con `--sin-juez` esas corridas fallan con motivo "requiere juez".
 Si la esperada es "no hay datos" (preguntas adversariales), la corrida pasa solo si el texto lo dice
 explícitamente y `valor` está vacío: un número en la respuesta cuenta como inventado.
 
@@ -269,19 +365,6 @@ Además, `eval/preguntas_robustez.jsonl` (`make eval-robustez`) tiene 34 pregunt
 cada pregunta de ejemplo y adversariales (sucursal S121, región "Oeste", abril de 2026, ventas en pesos,
 empleados, "esta semana", "la semana pasada", peor sucursal por tasa de quejas, total de pedidos). Todas las
 esperadas salen del oráculo.
-
-## Estado y pendientes
-
-Todo lo que corre sin clave está hecho y testeado: 532 tests offline en verde, más 25 que necesitan clave
-y se saltean. Lo que falta necesita `ANTHROPIC_API_KEY`:
-
-- `TODO(eval)`: correr `make eval` con clave real y pegar la tasa de aciertos por pregunta (los tests
-  offline usan un modelo falso).
-- `TODO(costo/latencia)`: completar con los números medidos por el eval.
-- `TODO(tests con clave)`: `ANTHROPIC_API_KEY=... make test` corre los 25 tests `requiere_clave` (P01–P10
-  reales, 8 pedidos de recomendación, 5 que no lo son, estabilidad).
-- `uv.lock`: generarlo con `uv lock` y commitearlo, para fijar versiones (sobre todo `langchain-anthropic`,
-  que valida parámetros por modelo).
 
 ## Cómo lo serviría en producción
 
@@ -334,7 +417,9 @@ flowchart LR
   cliente). Por eso es menos determinista que un modelo a temperatura 0. Las cifras igual salen de las
   herramientas y pasan por el verificador, y el orden de las recomendaciones lo decide un score
   determinístico. La variabilidad queda en la redacción y en qué herramientas elige.
-- **Juez del eval:** Claude Haiku 5.5 (`anthropic:claude-haiku-5-5`), temperatura 0.
+- **Juez del eval:** Claude Haiku 5.5 (`anthropic:claude-haiku-5-5`), también con la temperatura por defecto:
+  la API rechaza `temperature` para este modelo. La rúbrica cerrada y la salida estructurada (`correcto`
+  sí/no) acotan la variabilidad.
 
 El modelo se crea con `init_chat_model`, así que el código es agnóstico: se cambia con
 `MODELO_LLM=proveedor:modelo` (la variable de la clave se deduce del proveedor). Solo lo probé con
