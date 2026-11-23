@@ -33,7 +33,7 @@ variable exportar. Variables opcionales: `MODELO_LLM`, `MODELO_JUEZ` y `DATOS_DI
 make test                                 # suite offline con un modelo falso
 ```
 
-Tarda unos 10 segundos y debería terminar con **539 passed, 25 skipped**. Si da eso, el setup quedó bien.
+Tarda unos 10 segundos y debería terminar con **566 passed, 25 skipped**. Si da eso, el setup quedó bien.
 Los 25 salteados son los que llaman al modelo real.
 
 Opcionales:
@@ -64,12 +64,15 @@ corrida y no se versiona.
 ```bash
 make eval                                 # preguntas de ejemplo (10) + propias (6), 3 repeticiones
 make eval REPS=1                          # una sola repetición: más rápido y más barato
+make eval PARALELO=1                      # secuencial (por defecto corre 3 corridas a la vez)
 make eval-robustez                        # paráfrasis y preguntas adversariales (34)
 ```
 
 - Imprime una tabla por pregunta y deja el reporte en `reportes/reporte.md` y `reportes/reporte.json`,
   más una copia con fecha y hora. El de robustez queda en `reportes/robustez/`.
 - Una pregunta cuenta como acertada si acierta en la mayoría de las repeticiones.
+- Corre 3 corridas a la vez (`PARALELO`). Si la clave tiene un límite de tasa bajo, el eval reintenta los
+  429 con backoff; si aparecen muchos, conviene `PARALELO=1`.
 - **Costo estimado en la API de Anthropic** (se cobra a la cuenta de la clave): unos USD 0,05–0,08 por
   pregunta con Sonnet 5.5, más centavos del juez (Haiku 5.5). `make eval` son 48 corridas (16 × 3), unos
   USD 2,5–4; `make eval-robustez` son 102 (34 × 3), unos USD 5–8. Es una estimación previa: ver
@@ -124,8 +127,8 @@ $env:PYTHONUTF8 = "1"                     # salida en UTF-8 aunque se redirija a
 | `make test` | `uv run python -m pytest` |
 | `make test-clave` | `$env:PRUEBAS_CON_CLAVE = "1"; uv run python -m pytest -m requiere_clave` |
 | `make ask Q="..."` | `uv run python main.py "..."` |
-| `make eval` | `uv run python -m eval.evaluar eval/preguntas_ejemplo.jsonl eval/preguntas_propias.jsonl --repeticiones 3 --salida reportes/` |
-| `make eval-robustez` | `uv run python -m eval.evaluar eval/preguntas_robustez.jsonl --repeticiones 3 --salida reportes/robustez/` |
+| `make eval` | `uv run python -m eval.evaluar eval/preguntas_ejemplo.jsonl eval/preguntas_propias.jsonl --repeticiones 3 --paralelo 3 --salida reportes/` |
+| `make eval-robustez` | `uv run python -m eval.evaluar eval/preguntas_robustez.jsonl --repeticiones 3 --paralelo 3 --salida reportes/robustez/` |
 | `make chat` | `uv run python main.py --chat` |
 
 `PYTHONUTF8` evita un error de codificación con los acentos y la advertencia "⚠️" cuando la salida no va
@@ -296,6 +299,38 @@ devuelve de 3 a 5. Si no llegan a 3, completo con las siguientes marcadas "Atenc
 solo redacta el motivo y la acción, y el JSON lo imprime el código con `json.dumps` (nunca el modelo).
 Toda pregunta que pida recomendaciones devuelve ese JSON.
 
+**Latencia: priorizo respuestas confiables sobre velocidad.** Una pregunta típica tarda unos 4 segundos y
+una de recomendaciones, unos 6,5 (cifras en [Costo y latencia](#costo-y-latencia)). Casi todo ese tiempo
+es del modelo: cada pregunta hace dos llamadas seguidas (elegir la herramienta y escribir
+`RespuestaFinal`). Cada llamada procesa ~12,7k tokens de entrada y genera la respuesta; los datos, las
+herramientas y el verificador tardan milisegundos. Las dos llamadas son el mínimo de este diseño, porque
+toda cifra tiene que salir de una herramienta y pasar por el verificador. Si el verificador rechaza una
+cifra, hay una vuelta más. En recomendaciones, el modelo además redacta motivo y
+acción para 5 sucursales.
+
+En esta versión de prueba hay costos que en producción no estarían:
+- cada `make ask` es un proceso nuevo y paga ~2,4 s de arranque (importar LangChain y el SDK de
+  Anthropic, y curar los datos), que no entran en la latencia medida;
+- todo corre con Sonnet 5.5 y sin streaming, y el cache del prompt solo se aprovecha si las preguntas
+  llegan con menos de 5 minutos de diferencia.
+
+En producción se aceleraría así, de mayor a menor impacto:
+- **Sin arranque por pregunta:** el modelo y los datos se inicializan una vez, fuera del handler de la
+  Lambda (ver [Cómo lo serviría en producción](#cómo-lo-serviría-en-producción)). Ahorra ~2,4 s.
+- **Recomendaciones precalculadas:** los datos cambian una vez por snapshot, así que el job que publica
+  el snapshot puede dejar armado el JSON de recomendaciones de la semana (por cadena y por región). La
+  pregunta se responde leyéndolo, sin llamar al modelo.
+- **Una sola llamada en recomendaciones:** si hace falta calcularlas en el momento, el código llama a
+  `candidatos_visita` directo y el modelo solo redacta. Ahorra una vuelta (~2 s).
+- **Cache del prompt siempre caliente:** con tráfico continuo, los ~12k tokens fijos (system más schemas
+  de las herramientas) se leen del cache en casi todas las llamadas. Ya está implementado.
+- **Streaming del texto:** el gerente empieza a leer antes de que termine la respuesta. No baja el tiempo
+  total, pero sí el tiempo hasta ver algo.
+- **Modelo más chico para preguntas simples:** Haiku 5.5 para los conteos y rankings directos, si el eval
+  muestra que mantiene los aciertos. Se cambia con `MODELO_LLM`.
+- **Menos tokens por llamada:** schemas de herramientas más cortos (`pedidos`, `tasa_quejas` y
+  `ranking_sucursales` pesan ~3k caracteres cada uno).
+
 **Fecha de referencia** 2026-03-29, el último día con datos: "esta semana" = 23 al 29 de marzo.
 
 **Oráculo independiente** (`oraculo/oraculo.py`). Recalcula las respuestas esperadas con pandas puro sobre
@@ -325,25 +360,39 @@ inventadas "plausibles" (tasas de quejas, totales, porcentajes), no contra todos
 `TODO(costo/latencia)`: reemplazar con lo que mida el eval (el reporte ya junta tokens, costo y percentiles
 de latencia por corrida).
 
-Fórmula: `costo = tokens_entrada × precio_entrada + tokens_salida × precio_salida` (`agente/config.py`).
+Fórmula (`agente/config.py`): `costo = (tokens sin cache + 0,1 × leídos del cache + 1,25 × escritos en
+el cache) × precio_entrada + tokens_salida × precio_salida`.
 
 | Modelo | Entrada (USD/M tokens) | Salida (USD/M tokens) |
 |---|---|---|
 | Claude Sonnet 5.5 (agente) | 2,00 | 10,00 |
 | Claude Haiku 5.5 (juez, prompts < 100k) | 0,10 | 0,50 |
 
-Estimación previa, sin medir: cada llamada al modelo manda ~5.900 tokens fijos (system prompt ~1.250,
-schemas de las 10 herramientas ~4.200, `RespuestaFinal` ~450) más el historial de la pregunta. Con 3–5
-llamadas por pregunta son ~20–35k tokens de entrada y ~1k de salida → **~USD 0,05–0,08 por pregunta**.
-Latencia: `TODO(costo/latencia)`. Cada corrida deja su traza (herramientas, argumentos, tokens, costo,
-latencia, verificación) en `reportes/trazas/AAAAMMDD.jsonl`.
+**Prompt caching.** El system prompt va con un breakpoint de cache (`mensaje_sistema` en
+`agente/agente.py`). Anthropic arma el prefijo en el orden tools → system → mensajes, así que el cache
+cubre también los schemas de las 11 herramientas: ~12k de los ~12,7k tokens que manda cada llamada. La
+segunda llamada de cada pregunta, y las preguntas siguientes dentro de los 5 minutos, los leen del cache.
+El reporte del eval muestra cuántos tokens de entrada se leyeron del cache.
+
+Referencia medida **antes** del caching (eval del 2026-11-23, 16 preguntas × 1): casi todas las preguntas
+hacen 2 llamadas al modelo (elegir la herramienta y `RespuestaFinal`), con ~25.500 tokens de entrada y
+~380 de salida → US$0,057 por pregunta, latencia media 4,1 s (p95 5,5 s). Las recomendaciones tardan
+~6,5 s, porque el modelo redacta `motivo` y `accion_sugerida` de 5 sucursales.
+
+La latencia del reporte mide `responder()`. No incluye el arranque del proceso que paga cada
+`make ask` (importar LangChain y el SDK de Anthropic, y curar los datos): ~2,4 s medidos en Linux.
+
+Cada corrida deja su traza (herramientas, argumentos, tokens, costo, latencia, verificación) en
+`reportes/trazas/AAAAMMDD.jsonl`.
 
 ## Cómo funciona el eval
 
 **Extracción.** Primero uso el `valor` estructurado de la respuesta, normalizado según el tipo de la
 pregunta. Si falta o no sirve, un parser lee el texto:
 - números: un `.` o `,` seguido de exactamente 3 dígitos es separador de miles; si no, es decimal
-  ("2,15" = 2.15, "6.646" = 6646). Tomo el primer número del texto, no el más cercano a la esperada;
+  ("2,15" = 2.15, "6.646" = 6646). Tomo el primer número del texto, no el más cercano a la esperada.
+  Esta regla no se aplica al `valor`: ahí el schema pide punto decimal sin miles, así que "2.266" se
+  lee como 2,266 (con la regla del texto daba 2266 y fallaba R03v en el eval de robustez);
 - listas: IDs `S###` en orden de aparición, sin duplicados, y comparo en el mismo orden.
 
 **Textos.** Normalizo (minúsculas, sin tildes ni puntuación) y busco la esperada o sus palabras/tokens
@@ -410,7 +459,7 @@ flowchart LR
 ## Qué mejoraría con más tiempo
 
 - Intervalos de confianza de Poisson o shrinkage bayesiano para rankear sucursales con poco volumen.
-- Prompt caching del system prompt y del catálogo de herramientas (baja costo y latencia).
+- Las mejoras de latencia que se listan en [Decisiones de diseño](#decisiones-de-diseño).
 - Probar con otros proveedores (el código ya lo permite) y comparar.
 - Más preguntas adversariales (ambiguas, fuera del periodo, sucursales inexistentes).
 - Correr el eval en CI con clave, con `--umbral` como compuerta.
