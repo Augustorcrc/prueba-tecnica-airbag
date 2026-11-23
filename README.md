@@ -73,10 +73,10 @@ make eval-robustez                        # paráfrasis y preguntas adversariale
 - Una pregunta cuenta como acertada si acierta en la mayoría de las repeticiones.
 - Corre 3 corridas a la vez (`PARALELO`). Si la clave tiene un límite de tasa bajo, el eval reintenta los
   429 con backoff; si aparecen muchos, conviene `PARALELO=1`.
-- **Costo estimado en la API de Anthropic** (se cobra a la cuenta de la clave): unos USD 0,05–0,08 por
-  pregunta con Sonnet 5.5, más centavos del juez (Haiku 5.5). `make eval` son 48 corridas (16 × 3), unos
-  USD 2,5–4; `make eval-robustez` son 102 (34 × 3), unos USD 5–8. Es una estimación previa: ver
-  [Costo y latencia](#costo-y-latencia).
+- **Costo en la API de Anthropic** (se cobra a la cuenta de la clave): ~USD 0,01 por pregunta con
+  Sonnet 5.5 y prompt caching, más una fracción de centavo del juez (Haiku 5.5). Medido el 2026-11-23:
+  `make eval` (48 corridas, 16 × 3) costó USD 0,49 y `make eval-robustez` (102 corridas, 34 × 3),
+  USD 1,03. Detalle en [Costo y latencia](#costo-y-latencia).
 
 Para más control, el eval se corre directo:
 
@@ -300,7 +300,7 @@ solo redacta el motivo y la acción, y el JSON lo imprime el código con `json.d
 Toda pregunta que pida recomendaciones devuelve ese JSON.
 
 **Latencia: priorizo respuestas confiables sobre velocidad.** Una pregunta típica tarda unos 4 segundos y
-una de recomendaciones, unos 6,5 (cifras en [Costo y latencia](#costo-y-latencia)). Casi todo ese tiempo
+una de recomendaciones, unos 7 (cifras en [Costo y latencia](#costo-y-latencia)). Casi todo ese tiempo
 es del modelo: cada pregunta hace dos llamadas seguidas (elegir la herramienta y escribir
 `RespuestaFinal`). Cada llamada procesa ~12,7k tokens de entrada y genera la respuesta; los datos, las
 herramientas y el verificador tardan milisegundos. Las dos llamadas son el mínimo de este diseño, porque
@@ -323,7 +323,9 @@ En producción se aceleraría así, de mayor a menor impacto:
 - **Una sola llamada en recomendaciones:** si hace falta calcularlas en el momento, el código llama a
   `candidatos_visita` directo y el modelo solo redacta. Ahorra una vuelta (~2 s).
 - **Cache del prompt siempre caliente:** con tráfico continuo, los ~12k tokens fijos (system más schemas
-  de las herramientas) se leen del cache en casi todas las llamadas. Ya está implementado.
+  de las herramientas) se leen del cache en casi todas las llamadas. Ya está implementado: en el eval
+  bajó el costo unas 5,6 veces, pero la latencia casi no cambió (4,1 → 4,0 s), porque el tiempo lo
+  domina la generación de la respuesta.
 - **Streaming del texto:** el gerente empieza a leer antes de que termine la respuesta. No baja el tiempo
   total, pero sí el tiempo hasta ver algo.
 - **Modelo más chico para preguntas simples:** Haiku 5.5 para los conteos y rankings directos, si el eval
@@ -357,8 +359,21 @@ inventadas "plausibles" (tasas de quejas, totales, porcentajes), no contra todos
 
 ## Costo y latencia
 
-`TODO(costo/latencia)`: reemplazar con lo que mida el eval (el reporte ya junta tokens, costo y percentiles
-de latencia por corrida).
+Medido el 2026-11-23 con Sonnet 5.5, prompt caching, 3 repeticiones por pregunta y 3 corridas en
+paralelo (los reportes de esas corridas no se versionan):
+
+| Eval | Corridas | Aciertos | Costo por pregunta | Latencia media | p95 | Costo total |
+|---|---|---|---|---|---|---|
+| `make eval` (ejemplo + propias) | 48 | 16/16, todas 3 de 3 | US$0,010 | 4,0 s | 6,0 s | US$0,49 (+ US$0,001 del juez) |
+| `make eval-robustez` | 102 | 34/34, todas 3 de 3 | US$0,010 | 3,7 s | 5,1 s | US$1,03 |
+
+- Una pregunta típica hace 2 llamadas al modelo: ~26k tokens de entrada (el 97 % leído del cache) y
+  ~350 de salida.
+- La más lenta es A04 (6–7 s): en 2 de 3 corridas el modelo hace una tercera llamada
+  (`buscar_sucursales`) para describir las sucursales nuevas que excluye.
+- Una pregunta de recomendaciones ("¿Qué sucursales debería visitar esta semana?") tarda ~7 s y cuesta
+  ~US$0,05: son 2 llamadas, pero el modelo redacta motivo y acción para 5 sucursales (~900 tokens de
+  salida).
 
 Fórmula (`agente/config.py`): `costo = (tokens sin cache + 0,1 × leídos del cache + 1,25 × escritos en
 el cache) × precio_entrada + tokens_salida × precio_salida`.
@@ -374,10 +389,9 @@ cubre también los schemas de las 11 herramientas: ~12k de los ~12,7k tokens que
 segunda llamada de cada pregunta, y las preguntas siguientes dentro de los 5 minutos, los leen del cache.
 El reporte del eval muestra cuántos tokens de entrada se leyeron del cache.
 
-Referencia medida **antes** del caching (eval del 2026-11-23, 16 preguntas × 1): casi todas las preguntas
-hacen 2 llamadas al modelo (elegir la herramienta y `RespuestaFinal`), con ~25.500 tokens de entrada y
-~380 de salida → US$0,057 por pregunta, latencia media 4,1 s (p95 5,5 s). Las recomendaciones tardan
-~6,5 s, porque el modelo redacta `motivo` y `accion_sugerida` de 5 sucursales.
+Antes del caching (mismo eval, 1 repetición, `reportes/ejemplo_evaluacion.md`): US$0,057 por pregunta y
+latencia media 4,1 s (p95 5,5 s). El caching bajó el costo unas 5,6 veces, pero casi no movió la
+latencia: el tiempo lo domina la generación de la respuesta, no la lectura del prompt.
 
 La latencia del reporte mide `responder()`. No incluye el arranque del proceso que paga cada
 `make ask` (importar LangChain y el SDK de Anthropic, y curar los datos): ~2,4 s medidos en Linux.
