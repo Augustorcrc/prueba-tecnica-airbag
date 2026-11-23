@@ -20,7 +20,9 @@ class ItemRecomendacion(BaseModel):
 
     sucursal_id: str = Field(description="ID de la sucursal, por ejemplo S012.")
     motivo: str = Field(description="Por qué esta sucursal necesita atención.")
-    evidencia: str = Field(description="Cifras de las herramientas que respaldan el motivo.")
+    evidencia: str = Field(
+        default="", description="Dejala vacía: la completa el sistema con las cifras de candidatos_visita."
+    )
     accion_sugerida: str = Field(description="Qué debería hacer el gerente.")
 
 

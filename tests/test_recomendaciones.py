@@ -30,9 +30,10 @@ def _tam(r):
 
 def test_default_cadena(datos):
     r = candidatos_visita(datos)
-    assert _ids(r) == ["S112", "S012", "S067", "S056", "S024"]
-    ratios = [c["ratio_regional"] for c in r["resultado"]["candidatos"]]
-    assert ratios == pytest.approx([2.29, 2.07, 2.04, 1.98, 1.98], abs=0.01)
+    assert _ids(r) == ["S056", "S024", "S107", "S053", "S045"]
+    excesos = [c["exceso_quejas"] for c in r["resultado"]["candidatos"]]
+    assert excesos == pytest.approx([44.7, 21.8, 15.0, 13.8, 13.7], abs=0.1)
+    assert excesos == sorted(excesos, reverse=True)
     assert all(c["supera_umbral"] and not c["preventiva"] for c in r["resultado"]["candidatos"])
     assert r["periodo"] == {"desde": "2026-03-02", "hasta": "2026-03-29"}
     p = r["resultado"]["parametros"]
@@ -44,12 +45,14 @@ def test_default_cadena(datos):
 def test_componentes_consistentes(datos):
     c = candidatos_visita(datos)["resultado"]["candidatos"][0]
     claves = {"sucursal_id", "nombre", "region", "ciudad", "tasa_4sem", "tasa_region_4sem",
-              "ratio_regional", "quejas_4sem", "pedidos_4sem", "tasa_4sem_anterior", "tendencia",
+              "ratio_regional", "quejas_4sem", "pedidos_4sem", "exceso_quejas", "tasa_4sem_anterior", "tendencia",
               "categoria_dominante", "pct_categoria_dominante", "capacitada", "fecha_capacitacion",
               "metodo_asignacion", "supera_umbral", "preventiva", "accion_sugerida_base", "advertencias"}
     assert claves <= set(c)
     assert c["tasa_4sem"] == pytest.approx(c["quejas_4sem"] / c["pedidos_4sem"] * 1000, abs=0.01)
     assert c["ratio_regional"] == pytest.approx(c["tasa_4sem"] / c["tasa_region_4sem"], abs=0.01)
+    esperado = c["quejas_4sem"] - c["pedidos_4sem"] * c["tasa_region_4sem"] / 1000
+    assert c["exceso_quejas"] == pytest.approx(esperado, abs=0.2)
     assert c["categoria_dominante"] in ACCIONES_POR_CATEGORIA
 
 
@@ -82,7 +85,7 @@ def test_menos_de_tres_sobre_umbral_completa_con_preventivas(datos):
 def test_n_exacto(datos, n):
     r = candidatos_visita(datos, n=n)
     assert len(r["resultado"]["candidatos"]) == n
-    assert _ids(r)[:min(n, 5)] == ["S112", "S012", "S067", "S056", "S024"][:n]
+    assert _ids(r)[:min(n, 5)] == ["S056", "S024", "S107", "S053", "S045"][:n]
 
 
 def test_n_marca_preventivas(datos):
@@ -113,6 +116,40 @@ def test_tendencias_y_seguimiento(datos):
     accion = s012["accion_sugerida_base"].lower()
     assert accion.startswith("seguimiento") and "capacitar" not in accion
     assert s012["fecha_capacitacion"] in accion
+
+
+def test_orden_superan_primero_y_por_exceso(datos):
+    cands = _todas(datos)["resultado"]["candidatos"]
+    supera = [c["supera_umbral"] for c in cands]
+    assert supera == sorted(supera, reverse=True)  # primero todas las que superan el umbral
+    for grupo in (True, False):
+        excesos = [c["exceso_quejas"] for c in cands if c["supera_umbral"] is grupo]
+        assert excesos == sorted(excesos, reverse=True)
+
+
+def test_categorias_exceso(datos):
+    por_id = {c["sucursal_id"]: c for c in candidatos_visita(datos)["resultado"]["candidatos"]}
+    for c in por_id.values():
+        assert len(c["categorias_exceso"]) <= 2
+        for x in c["categorias_exceso"]:
+            assert x["quejas"] - x["esperadas"] >= 3 - 0.05 and x["quejas"] >= 1.5 * x["esperadas"] - 0.05
+    # S024: lo que más se aparta de su región es limpieza, y la acción arranca por limpieza.
+    s024 = por_id["S024"]
+    assert s024["categorias_exceso"][0] == {"categoria": "limpieza", "quejas": 9, "esperadas": 2.3}
+    assert s024["accion_sugerida_base"].startswith(f"escalar: {ACCIONES_POR_CATEGORIA['limpieza']}; además, ")
+    # S056: demora y pedido incorrecto.
+    assert [x["categoria"] for x in por_id["S056"]["categorias_exceso"]] == ["demora", "pedido_incorrecto"]
+    # Con categoría pedida no se calcula (la acción es la de esa categoría).
+    assert "categorias_exceso" not in candidatos_visita(datos, categoria="limpieza")["resultado"]["candidatos"][0]
+
+
+def test_capacitada_en_suba_escala(datos):
+    por_id = {c["sucursal_id"]: c for c in _todas(datos)["resultado"]["candidatos"]}
+    s024 = por_id["S024"]
+    assert s024["capacitada"] is True and s024["tendencia"]["etiqueta"] == "sube"
+    accion = s024["accion_sugerida_base"].lower()
+    assert accion.startswith("escalar:") and "capacitar" not in accion
+    assert s024["fecha_capacitacion"] in accion
 
 
 def test_categoria_usa_solo_esa_categoria(datos):
@@ -150,7 +187,7 @@ def test_serializable_y_tamano(datos):
     for kwargs in ({}, {"region": "Costa"}, {"categoria": "demora"}, {"incluir_nuevas": True}):
         r = candidatos_visita(datos, **kwargs)
         assert json.loads(json.dumps(r, ensure_ascii=False)) == r
-        assert _tam(r) < 4096
+        assert _tam(r) < 5200
 
 
 def test_tasa_emparejada_s035(datos):
@@ -169,7 +206,7 @@ def test_categoria_define_la_accion(datos):
     for c in cands:
         accion = c["accion_sugerida_base"]
         assert "demora" not in accion.lower() and "dotación" not in accion
-        assert accion == base or accion.startswith(f"seguimiento: {base};")
+        assert accion == base or accion.startswith((f"seguimiento: {base};", f"escalar: {base};"))
         assert "categoria_dominante" in c  # queda como dato extra
     # S024 tiene "demora" como dominante pero la acción es la de limpieza.
     assert any(c["categoria_dominante"] != "limpieza" for c in cands)
@@ -195,9 +232,9 @@ def test_n_tope_10(datos):
 
 
 @pytest.mark.parametrize("kwargs, limite", [
-    ({"n": 5}, 4096), ({"n": 5, "categoria": "limpieza"}, 4096),
-    ({"n": 5, "categoria": "demora", "incluir_nuevas": True}, 4096),
-    ({"n": 10}, 8192), ({"n": 10, "categoria": "trato", "incluir_nuevas": True}, 8192),
+    ({"n": 5}, 5200), ({"n": 5, "categoria": "limpieza"}, 5200),
+    ({"n": 5, "categoria": "demora", "incluir_nuevas": True}, 5200),
+    ({"n": 10}, 10400), ({"n": 10, "categoria": "trato", "incluir_nuevas": True}, 10400),
 ])
 def test_tamano_con_recorte_de_campos(datos, kwargs, limite):
     r = candidatos_visita(datos, **kwargs)

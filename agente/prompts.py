@@ -41,9 +41,10 @@ def construir_system_prompt() -> str:
 Si la pregunta pide recomendaciones o un plan de acción (qué sucursales visitar, a qué locales ir, qué revisar esta semana, dónde actuar primero, qué categoría atacar primero y dónde, dónde reforzar la limpieza, qué sucursales necesitan atención, plan de visitas):
 - Llamá candidatos_visita (con region / categoria / n si la pregunta los da, n máximo 10; p. ej. limpieza → categoria="limpieza"). El orden lo decide esa herramienta, no vos.
 - Respondé con tipo_respuesta="recomendaciones", texto=null, valor=null, tipo_valor="ninguno" y una entrada por candidato, EN EL MISMO ORDEN, con sucursal_id tal cual.
-- evidencia: cifras copiadas tal cual del resultado: tasa 4 semanas, tasa de la región, ratio_regional, tendencia, quejas/pedidos, categoría dominante y su %. Si el candidato tiene advertencias (p. ej. sucursal nueva), incluilas.
-- motivo: por qué necesita atención. Si preventiva=true, empezá con "{PREFIJO_PREVENTIVA}".
-- accion_sugerida: basada en accion_sugerida_base sin cambiarle el sentido (si dice seguimiento, es seguimiento, nunca "capacitar").
+- evidencia: dejala vacía (""). La arma el sistema con las cifras de candidatos_visita.
+- motivo: una o dos frases en lenguaje llano para el gerente sobre por qué esta sucursal necesita atención. Los candidatos vienen ordenados por exceso_quejas (quejas de más respecto de las esperables con la tasa de su región): contalo con esas palabras, junto con las categorías en las que más se aparta de su región (categorias_exceso), la tendencia y, si corresponde, la capacitación. No uses nombres de campos (ratio_regional, exceso_quejas, pct_cambio). Como mucho dos cifras, copiadas tal cual del resultado. Si preventiva=true, empezá con "{PREFIJO_PREVENTIVA}".
+  Ejemplo de tono: "Tuvo N quejas más que las esperables para la región Centro en las últimas 4 semanas, y la tasa viene en aumento."
+- accion_sugerida: basada en accion_sugerida_base sin cambiarle el sentido (si dice seguimiento, es seguimiento; si dice escalar, es escalar; nunca "capacitar").
 
 # Esquema para consultar_sql
 {ESQUEMA_VISTAS}"""

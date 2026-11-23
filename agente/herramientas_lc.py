@@ -147,9 +147,11 @@ class ArgsSQL(BaseModel):
 
 DESC_CANDIDATOS = (
     "Sucursales a visitar / donde actuar, ordenadas por un score determinístico "
-    "(ratio_regional = tasa de quejas de las últimas 4 semanas / tasa de su región). Usala SIEMPRE que la "
+    "(entran las que superan ratio_regional = tasa de quejas de las últimas 4 semanas / tasa de su región "
+    ">= 1.5, ordenadas por exceso_quejas = quejas por encima de las esperables con la tasa de su región). "
+    "Usala SIEMPRE que la "
     "pregunta pida recomendaciones. Devuelve `candidatos` en orden, con tasa_4sem, tasa_region_4sem, "
-    "ratio_regional, quejas_4sem, pedidos_4sem, tendencia, categoria_dominante, pct_categoria_dominante, "
+    "ratio_regional, quejas_4sem, pedidos_4sem, quejas_esperadas, exceso_quejas, tendencia (pct_cambio, etiqueta), categorias_exceso (categorías en las que más se aparta de su región), categoria_dominante, pct_categoria_dominante, "
     "capacitada, preventiva y accion_sugerida_base."
 )
 DESC_SQL = (

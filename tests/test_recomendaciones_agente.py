@@ -13,19 +13,20 @@ import pytest
 from agente.agente import (
     alinear_con_candidatos,
     es_pregunta_de_recomendacion,
+    evidencia_deterministica,
     item_deterministico,
     parametros_de_pregunta,
     responder,
 )
 from agente.config import MAX_PASOS
 from agente.esquemas import RespuestaFinal
-from agente.recomendaciones import PREFIJO_PREVENTIVA, candidatos_visita
+from agente.recomendaciones import PREFIJO_PREVENTIVA, _candidatos_visita, candidatos_visita
 from agente.verificador import verificar_respuesta
 from tests.fakes import ModeloFalso, ai, final, llamada
 
 SIN_CLAVE = not os.environ.get("ANTHROPIC_API_KEY", "").strip()
 CLAVES = {"sucursal_id", "motivo", "evidencia", "accion_sugerida"}
-CADENA = ["S112", "S012", "S067", "S056", "S024"]
+CADENA = ["S056", "S024", "S107", "S053", "S045"]
 PREGUNTA = "¿Qué sucursales debería visitar esta semana?"
 
 
@@ -91,12 +92,12 @@ def test_cadena_json_puro_con_los_5(datos):
 
 def test_cifra_inventada_dos_veces_se_completa_con_el_siguiente(datos):
     cs = candidatos(datos)
-    items = [item_llm(c, tasa=9.99 if c["sucursal_id"] == "S067" else None) for c in cs]
+    items = [item_llm(c, tasa=9.99 if c["sucursal_id"] == "S107" else None) for c in cs]
     guion = [ai(llamada("candidatos_visita")), final_recos(items), final_recos(items)]
     r = responder(PREGUNTA, modelo=ModeloFalso(guion), datos=datos)
     siguiente = candidatos(datos, n=6)[5]
-    assert ids(r) == ["S112", "S012", "S056", "S024", siguiente["sucursal_id"]]
-    assert any("S067" in a for a in r.traza["advertencias"])
+    assert ids(r) == ["S056", "S024", "S053", "S045", siguiente["sucursal_id"]]
+    assert any("S107" in a for a in r.traza["advertencias"])
     nuevo = r.recomendaciones[-1]
     assert nuevo.evidencia == item_deterministico(siguiente, "2026-03-02..2026-03-29").evidencia
     # la evidencia determinística verifica contra el resultado de candidatos_visita
@@ -115,9 +116,25 @@ def test_orden_cambiado_por_el_llm_se_corrige(datos):
     r = responder(PREGUNTA, modelo=ModeloFalso(guion), datos=datos)
     assert ids(r) == CADENA
     assert any("orden" in a for a in r.traza["advertencias"])
-    # se conserva el texto del LLM de cada sucursal
+    # se conserva el motivo del LLM de cada sucursal; la evidencia la arma siempre el código
     por_id = {i["sucursal_id"]: i for i in items}
-    assert all(it.evidencia == por_id[it.sucursal_id]["evidencia"] for it in r.recomendaciones)
+    cand = {c["sucursal_id"]: c for c in cs}
+    assert all(it.motivo == por_id[it.sucursal_id]["motivo"] for it in r.recomendaciones)
+    assert all(it.evidencia == evidencia_deterministica(cand[it.sucursal_id], "2026-03-02..2026-03-29")
+               for it in r.recomendaciones)
+
+
+def test_evidencia_vacia_del_llm_la_completa_el_codigo(datos):
+    cs = candidatos(datos)
+    items = [{k: v for k, v in item_llm(c).items() if k != "evidencia"} for c in cs]
+    guion = [ai(llamada("candidatos_visita")), final_recos(items)]
+    r = responder(PREGUNTA, modelo=ModeloFalso(guion), datos=datos)
+    assert ids(r) == CADENA
+    assert r.traza["verificacion"]["ok"] is True and r.traza["advertencias"] == []
+    for it, c in zip(r.recomendaciones, cs):
+        assert it.evidencia == evidencia_deterministica(c, "2026-03-02..2026-03-29")
+        assert "ratio_regional" not in it.evidencia and "exceso_quejas" not in it.evidencia
+        assert "esperables con la tasa de su región" in it.evidencia
 
 
 def test_sucursal_ajena_se_reemplaza_por_el_candidato(datos):
@@ -156,7 +173,8 @@ def test_item_deterministico_preventiva_y_nuevas(datos):
     c = dict(candidatos(datos)[0], preventiva=True, supera_umbral=False)
     item = item_deterministico(c)
     assert item.motivo.startswith(PREFIJO_PREVENTIVA)
-    nuevas = [c for c in candidatos(datos, incluir_nuevas=True) if any("abrió" in a for a in c["advertencias"])]
+    todas = _candidatos_visita(datos, incluir_nuevas=True, n=200, n_maximo=None)["resultado"]["candidatos"]
+    nuevas = [c for c in todas if any("abrió" in a for a in c["advertencias"])]
     assert nuevas
     assert "abrió el" in item_deterministico(nuevas[0]).evidencia
 

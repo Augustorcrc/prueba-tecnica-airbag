@@ -161,7 +161,7 @@ La limpieza deja los datos correctos. Estas reglas definen **cómo se calculan**
 - Se une a `sucursales` con tres columnas: `capacitada`, `fecha_capacitacion` y `metodo_asignacion`.
 - Se usa en dos herramientas:
   - `efecto_capacitacion`, que responde si la capacitación redujo las quejas. La metodología y el resultado están en el README, en la sección "Qué encontré en los datos y cómo lo traté".
-  - `candidatos_visita`: si una sucursal recomendada ya fue capacitada, la acción sugerida es de seguimiento, no "capacitar".
+  - `candidatos_visita`: si una sucursal recomendada ya fue capacitada, la acción sugerida nunca es "capacitar". Es de seguimiento, salvo que la tasa de quejas siga subiendo después de la capacitación: en ese caso es "escalar".
 
 ---
 

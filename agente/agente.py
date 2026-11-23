@@ -3,7 +3,8 @@
 - `responder(pregunta)` arma el grafo con las herramientas LangChain, corre la pregunta y devuelve una
   `Respuesta` con la traza (latencia, tokens, costo, llamadas, verificación, advertencias). Nunca
   propaga errores del proveedor: devuelve una `Respuesta` de tipo dato con el error en la traza.
-- Recomendaciones (D4.2: el score decide, el LLM solo redacta): las sucursales recomendadas son
+- Recomendaciones (D4.2: el score decide, el LLM solo redacta motivo y acción; la evidencia la arma
+  siempre el código con `evidencia_deterministica`): las sucursales recomendadas son
   exactamente las de `candidatos_visita`, en el mismo orden. Si el LLM cambia el orden, agrega otra
   sucursal o le falta alguna, se corrige en forma determinística y se deja en `traza.advertencias`.
   Los ítems descartados por el verificador se reponen con el hook `completar_recomendaciones`.
@@ -129,53 +130,117 @@ def ultima_llamada_candidatos(estado: dict) -> dict | None:
     return None
 
 
-def item_deterministico(candidato: dict, periodo: str | None = None) -> ItemRecomendacion:
-    """Ítem armado solo con los componentes del score: las cifras verifican por construcción."""
+NOMBRE_CATEGORIA = {"pedido_incorrecto": "pedido incorrecto", "calidad_producto": "calidad de producto"}
+
+
+def _cat(categoria: str) -> str:
+    return NOMBRE_CATEGORIA.get(categoria, categoria)
+
+
+def _frase(texto: str) -> str:
+    return texto[0].upper() + texto[1:] if texto else texto
+
+
+def evidencia_deterministica(candidato: dict, periodo: str | None = None) -> str:
+    """Evidencia en lenguaje llano armada solo con las cifras del candidato (verifican por construcción).
+
+    La evidencia la arma siempre el código (el LLM solo redacta motivo y acción): mismas etiquetas en cada
+    corrida y ninguna cifra copiada a mano.
+    """
     c = candidato
+    region = c.get("region")
+    tasa = _num(c.get("tasa_4sem"))
+    ventana = f"Últimas 4 semanas ({periodo.replace('..', ' a ')})" if periodo else "Últimas 4 semanas"
+    partes = [
+        f"{ventana}: {tasa} quejas cada 1.000 pedidos, {_num(c.get('ratio_regional'))} veces la de la región "
+        f"{region} ({_num(c.get('tasa_region_4sem'))})"
+    ]
+    volumen = f"{_num(c.get('quejas_4sem'))} quejas sobre {_num(c.get('pedidos_4sem'))} pedidos"
+    esperadas, exceso = c.get("quejas_esperadas"), c.get("exceso_quejas")
+    if esperadas is not None and exceso is not None:
+        if exceso >= 0:
+            volumen += f": {_num(exceso)} más que las {_num(esperadas)} esperables con la tasa de su región"
+        else:
+            volumen += f", por debajo de las {_num(esperadas)} esperables con la tasa de su región"
+    partes.append(volumen)
+
     tendencia = c.get("tendencia") or {}
     etiqueta = tendencia.get("etiqueta") or "sin_datos"
-    region = c.get("region")
-    cuerpo = (
-        f"su tasa de quejas de las últimas 4 semanas ({_num(c.get('tasa_4sem'))} por 1.000 pedidos) es "
-        f"{_num(c.get('ratio_regional'))} veces la de la región {region}"
-    )
-    if c.get("preventiva"):
-        motivo = f"{PREFIJO_PREVENTIVA} {cuerpo}."
+    pct = tendencia.get("pct_cambio")
+    anterior = _num(c.get("tasa_4sem_anterior"))
+    if etiqueta == "sube":
+        partes.append(f"frente a las 4 semanas anteriores subió de {anterior} a {tasa} (+{_num(pct)} %)")
+    elif etiqueta == "baja":
+        partes.append(f"frente a las 4 semanas anteriores bajó de {anterior} a {tasa} ({_num(pct)} %)")
+    elif etiqueta == "estable":
+        signo = "+" if (pct or 0) >= 0 else ""
+        partes.append(f"frente a las 4 semanas anteriores se mantuvo estable (de {anterior} a {tasa}; "
+                      f"{signo}{_num(pct)} %)")
     else:
-        motivo = cuerpo[0].upper() + cuerpo[1:] + ", por encima del umbral."
-    if etiqueta in ("sube", "baja", "estable"):
-        motivo += f" Tendencia: {etiqueta}."
-    if c.get("categoria_dominante"):
-        motivo += f" Predomina {c['categoria_dominante']}."
-
-    partes = [
-        f"Tasa 4 semanas{f' ({periodo})' if periodo else ''}: {_num(c.get('tasa_4sem'))} quejas por 1.000 pedidos "
-        f"vs {_num(c.get('tasa_region_4sem'))} de la región {region} (ratio {_num(c.get('ratio_regional'))})",
-        f"{_num(c.get('quejas_4sem'))} quejas sobre {_num(c.get('pedidos_4sem'))} pedidos",
-    ]
-    if etiqueta == "sin_datos":
-        partes.append("tendencia: sin datos del periodo anterior")
-    else:
+        partes.append("sin datos de las 4 semanas anteriores para comparar")
+    cats = c.get("categorias_exceso") or []
+    if cats:
+        detalle = [f"{_cat(x['categoria'])} ({_num(x['quejas'])} quejas vs {_num(x['esperadas'])} esperables)"
+                   for x in cats]
+        partes.append("lo que más se aparta de su región: " + " y ".join(detalle))
+    elif c.get("categoria_dominante"):
+        prefijo = "ninguna categoría se aparta especialmente de su región; " if "categorias_exceso" in c else ""
         partes.append(
-            f"tendencia: {etiqueta} (ratio {_num(tendencia.get('ratio'))}; tasa anterior "
-            f"{_num(c.get('tasa_4sem_anterior'))})"
-        )
-    if c.get("categoria_dominante"):
-        partes.append(
-            f"categoría dominante: {c['categoria_dominante']} ({_num(c.get('pct_categoria_dominante'))}% de las quejas)"
+            f"{prefijo}la categoría más frecuente es {_cat(c['categoria_dominante'])} "
+            f"({_num(c.get('pct_categoria_dominante'))}% de las quejas)"
         )
     if c.get("capacitada"):
         partes.append(f"capacitada el {c.get('fecha_capacitacion')}")
-    evidencia = "; ".join(partes) + "."
+    evidencia = ". ".join(_frase(p) for p in partes) + "."
     for adv in c.get("advertencias") or []:
         evidencia += f" Advertencia: {adv}."
-    accion = str(c.get("accion_sugerida_base") or "revisión general de la operación")
+    return evidencia
+
+
+def motivo_deterministico(candidato: dict) -> str:
+    """Motivo de respaldo (si el LLM no lo redactó): exceso de quejas, tendencia y capacitación."""
+    c = candidato
+    exceso = c.get("exceso_quejas")
+    if exceso is not None and exceso > 0:
+        cuerpo = (f"tuvo {_num(exceso)} quejas más que las esperables para la región {c.get('region')} "
+                  f"en las últimas 4 semanas")
+        cats = [_cat(x["categoria"]) for x in c.get("categorias_exceso") or []]
+        if cats:
+            cuerpo += f", sobre todo de {' y '.join(cats)}"
+    else:
+        cuerpo = (f"su tasa de quejas de las últimas 4 semanas es {_num(c.get('ratio_regional'))} veces la de "
+                  f"la región {c.get('region')}")
+    etiqueta = (c.get("tendencia") or {}).get("etiqueta")
+    if c.get("capacitada") and etiqueta == "sube":
+        cuerpo += f", y la tasa siguió subiendo después de la capacitación del {c.get('fecha_capacitacion')}"
+    elif etiqueta == "sube":
+        cuerpo += ", y la tasa viene en aumento"
+    elif etiqueta == "baja":
+        cuerpo += ", aunque la tasa viene bajando"
+    elif etiqueta == "estable":
+        cuerpo += ", con la tasa estable"
+    if c.get("preventiva"):
+        return f"{PREFIJO_PREVENTIVA} {cuerpo}."
+    return _frase(cuerpo) + "."
+
+
+def item_deterministico(candidato: dict, periodo: str | None = None) -> ItemRecomendacion:
+    """Ítem armado solo con los componentes del score: las cifras verifican por construcción."""
+    accion = str(candidato.get("accion_sugerida_base") or "revisión general de la operación")
     return ItemRecomendacion(
-        sucursal_id=str(c["sucursal_id"]),
-        motivo=motivo,
-        evidencia=evidencia,
-        accion_sugerida=accion[0].upper() + accion[1:],
+        sucursal_id=str(candidato["sucursal_id"]),
+        motivo=motivo_deterministico(candidato),
+        evidencia=evidencia_deterministica(candidato, periodo),
+        accion_sugerida=_frase(accion),
     )
+
+
+def con_evidencia_deterministica(item: ItemRecomendacion, candidato: dict, periodo: str | None) -> ItemRecomendacion:
+    """Ítem del LLM con la evidencia reemplazada por la del código (y motivo de respaldo si vino vacío)."""
+    cambios = {"evidencia": evidencia_deterministica(candidato, periodo)}
+    if not (item.motivo or "").strip():
+        cambios["motivo"] = motivo_deterministico(candidato)
+    return item.model_copy(update=cambios)
 
 
 def _items_por_id(items: list[ItemRecomendacion] | None) -> dict[str, ItemRecomendacion]:
@@ -262,7 +327,10 @@ def alinear_con_candidatos(
     del_llm = _items_por_id(respuesta.recomendaciones)
     ids_llm = [i.sucursal_id.strip().upper() for i in respuesta.recomendaciones or []]
 
-    items = [del_llm.get(i) or item_deterministico(c, periodo) for i, c in zip(esperado, candidatos)]
+    items = [
+        con_evidencia_deterministica(del_llm[i], c, periodo) if i in del_llm else item_deterministico(c, periodo)
+        for i, c in zip(esperado, candidatos)
+    ]
     if ids_llm != esperado:
         extra = [i for i in ids_llm if i not in esperado]
         faltan = [i for i in esperado if i not in del_llm]
