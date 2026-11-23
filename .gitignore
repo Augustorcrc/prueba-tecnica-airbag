@@ -226,6 +226,8 @@ __marimo__/
 .wheels/
 .venv-vm/
 .worktrees/
-reportes/trazas/
+# Salidas del agente y del eval: se regeneran en cada corrida. Solo se versionan los ejemplos estáticos.
+reportes/*
+!reportes/ejemplo_*
 .DS_Store
 data_raw/
