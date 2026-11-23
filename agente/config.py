@@ -31,8 +31,10 @@ TIMEOUT_LLM_S = 60
 # Restricciones de la API por modelo. Espejan las de langchain-anthropic 1.7.x
 # (`ChatAnthropic._assert_valid_model_configuration` y `_supports_forced_tool_choice` en
 # `langchain_anthropic/chat_models.py`): si se actualiza la librería, revisar estas tuplas.
-# - Estos modelos rechazan `temperature` distinta de 1 (y `top_p` != 1 o `top_k`): ValueError local.
-MODELOS_SIN_TEMPERATURA = ("claude-sonnet-5-5", "claude-fable-5")
+# - Estos modelos rechazan `temperature`: Sonnet 5.5 y Fable 5 con ValueError local (distinta de 1, y
+#   también `top_p` != 1 o `top_k`); Haiku 5.5 la deja pasar la librería, pero la API devuelve 400
+#   ("`temperature` is deprecated for this model", visto en el eval del 2026-11-23).
+MODELOS_SIN_TEMPERATURA = ("claude-sonnet-5-5", "claude-fable-5", "claude-haiku-5-5")
 # - Estos modelos no aceptan `tool_choice` de tipo "any" ni "tool" (la API devuelve 400): se usa "auto".
 MODELOS_SIN_TOOL_CHOICE_FORZADO = ("claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5")
 
@@ -70,8 +72,8 @@ def _sin_proveedor(nombre: str) -> str:
 def kwargs_modelo(nombre: str) -> dict:
     """Kwargs para `init_chat_model(nombre, **kwargs_modelo(nombre))`.
 
-    temperature=0 salvo en los modelos de `MODELOS_SIN_TEMPERATURA`, donde se omite (la librería lanza
-    ValueError con cualquier valor distinto de 1). Siempre `timeout` y `max_retries=2`.
+    temperature=0 salvo en los modelos de `MODELOS_SIN_TEMPERATURA`, donde se omite (la librería o la
+    API rechazan el parámetro). Siempre `timeout` y `max_retries=2`.
     """
     kwargs: dict = {"timeout": TIMEOUT_LLM_S, "max_retries": 2}
     if not _sin_proveedor(nombre).startswith(MODELOS_SIN_TEMPERATURA):

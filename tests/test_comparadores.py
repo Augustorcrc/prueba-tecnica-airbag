@@ -127,6 +127,38 @@ def test_juez_falso_ok():
     assert not c.comparar(resp("Se quejan del precio."), item(P10, "texto"), juez=juez).ok
 
 
+def test_juez_recibe_texto_y_valor_rotulados():
+    """El valor no se pega al final del texto: va aparte y rotulado (si no, el juez lo lee como un
+    fragmento suelto y penaliza una respuesta correcta)."""
+    vistas = []
+
+    def juez(pregunta, esperada, obtenida):
+        vistas.append(obtenida)
+        return Veredicto(razon="ok", correcto=True)
+
+    texto = "En S104 la queja principal es la limpieza: 49 de 60 quejas."
+    r = c.comparar(resp(texto, valor="limpieza", tipo_valor="texto"), item(P10, "texto"), juez=juez)
+    assert r.ok and len(vistas) == 1
+    assert vistas[0].startswith(texto)
+    assert "limpieza: 49" in vistas[0] and not vistas[0].endswith("quejas. limpieza")
+    assert "Valor estructurado" in vistas[0] and "limpieza)" in vistas[0]
+
+
+def test_formatear_obtenida():
+    from eval.juez import formatear_obtenida
+
+    assert formatear_obtenida("Texto.", None) == "Texto."
+    assert formatear_obtenida("Texto.", "Texto.") == "Texto."
+    assert formatear_obtenida("", "S012") == "Valor estructurado: S012"
+    assert formatear_obtenida("Texto.", "limpieza").endswith("(Valor estructurado, campo aparte para el eval: limpieza)")
+
+
+def test_veredicto_razona_antes_de_decidir():
+    """El modelo completa los campos en orden: la razón tiene que ir antes que el booleano."""
+    assert list(Veredicto.model_fields) == ["razon", "correcto"]
+    assert list(Veredicto.model_json_schema()["properties"]) == ["razon", "correcto"]
+
+
 def test_juez_runnable_con_include_raw():
     class Mensaje:
         usage_metadata = {"input_tokens": 1000, "output_tokens": 100}

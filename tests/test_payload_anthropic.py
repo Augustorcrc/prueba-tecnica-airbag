@@ -60,10 +60,11 @@ def test_sonnet_5_5_sin_temperature_y_tool_choice_auto(monkeypatch, datos):
     assert nombres == list(HERRAMIENTAS) + ["RespuestaFinal"]  # ninguna herramienta descartada
 
 
-def test_haiku_5_5_con_temperature_0_y_tool_choice_any(monkeypatch, datos):
+def test_haiku_5_5_sin_temperature_y_tool_choice_any(monkeypatch, datos):
+    """La API rechaza `temperature` para Haiku 5.5 (400), aunque la librería la deja pasar."""
     payload = _payload(monkeypatch, datos, "anthropic:claude-haiku-5-5")
     assert payload["model"] == "claude-haiku-5-5"
-    assert _temperatura(payload) == 0
+    assert _temperatura(payload) is None
     assert payload["tool_choice"] == {"type": "any"}
     assert len(payload["tools"]) == len(HERRAMIENTAS) + 1
 
@@ -105,7 +106,7 @@ def test_la_config_vieja_hubiera_fallado(monkeypatch, datos):
         ("anthropic:claude-fable-5-1", False, False),
         ("claude-fable-5", False, True),
         ("anthropic:claude-opus-5-5", True, False),
-        ("anthropic:claude-haiku-5-5", True, True),
+        ("anthropic:claude-haiku-5-5", False, True),
         ("openai:gpt-x", True, True),
     ],
 )

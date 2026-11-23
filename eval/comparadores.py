@@ -360,14 +360,15 @@ def comparar_sin_datos(respuesta: Respuesta) -> ResultadoComparacion:
     return ResultadoComparacion(False, texto, "sin_datos", "no dijo que no hay datos")
 
 
-def _usar_juez(item: dict, esperada: Any, combinado: str, obtenida: Any, usar_juez: bool, juez: Any,
+def _usar_juez(item: dict, esperada: Any, texto: str, valor: str, obtenida: Any, usar_juez: bool, juez: Any,
                motivo_sin_juez: str = "requiere juez") -> ResultadoComparacion:
+    """Decide con el LLM juez. El texto y el valor van por separado (el juez los ve rotulados)."""
     if not usar_juez:
         return ResultadoComparacion(False, obtenida, "ninguno", motivo_sin_juez)
     from eval.juez import juzgar
 
     try:
-        veredicto, uso = juzgar(item.get("pregunta", ""), esperada, combinado.strip(), juez=juez)
+        veredicto, uso = juzgar(item.get("pregunta", ""), esperada, texto, valor=valor, juez=juez)
     except Exception as e:  # el juez falla → la corrida falla, el eval sigue
         return ResultadoComparacion(False, obtenida, "juez", f"error del juez: {type(e).__name__}: {e}")
     return ResultadoComparacion(bool(veredicto.correcto), obtenida, "juez", veredicto.razon, uso_juez=uso)
@@ -400,7 +401,7 @@ def _comparar_texto(respuesta: Respuesta, item: dict, texto: str, *, usar_juez: 
                 return ResultadoComparacion(True, valor_str, "valor")
             if _contiene_frase(esp_norm, normalizar_texto(combinado)) or coinciden_tokens(esperada, combinado):
                 return ResultadoComparacion(True, valor_str, "valor")
-            return _usar_juez(item, esperada, combinado, valor_str, usar_juez, juez)
+            return _usar_juez(item, esperada, texto, valor_str, valor_str, usar_juez, juez)
         if clave(valor_str) == clave(esperada):
             return ResultadoComparacion(True, valor_str, "valor")
         if not extraer_numeros(esperada):
@@ -415,7 +416,7 @@ def _comparar_texto(respuesta: Respuesta, item: dict, texto: str, *, usar_juez: 
         if obtenido is not None:
             ok = obtenido == dominio[1]
             return ResultadoComparacion(ok, obtenido, "texto", None if ok else f"el primer candidato del texto es {obtenido}")
-        return _usar_juez(item, esperada, texto_eval, obtenida, usar_juez, juez)
+        return _usar_juez(item, esperada, texto, valor_str, obtenida, usar_juez, juez)
 
     if corta and not _primer_numero_ok(esperada, texto_eval):
         return ResultadoComparacion(False, obtenida, "tokens", "el primer número del texto no es el esperado")
@@ -423,7 +424,7 @@ def _comparar_texto(respuesta: Respuesta, item: dict, texto: str, *, usar_juez: 
         return ResultadoComparacion(True, obtenida, "texto")
     if corta and coinciden_tokens(esperada, texto_eval):
         return ResultadoComparacion(True, obtenida, "tokens")
-    return _usar_juez(item, esperada, f"{texto} {valor_str}" if valor_informativo else texto_eval, obtenida, usar_juez, juez)
+    return _usar_juez(item, esperada, texto, valor_str, obtenida, usar_juez, juez)
 
 
 # ---------------------------------------------------------------- entrada principal
