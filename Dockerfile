@@ -25,7 +25,6 @@ ENV PATH="/app/.venv/bin:$PATH"
 FROM base AS test
 RUN uv sync --frozen --no-install-project
 COPY tests ./tests
-COPY spikes ./spikes
 COPY docs ./docs
 RUN python -m pytest -o addopts="" -q
 
