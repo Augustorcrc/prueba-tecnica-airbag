@@ -6,7 +6,8 @@ quejas, sucursales y capacitaciones, y recomienda qué sucursales visitar. Prueb
 
 ## Cómo correrlo (macOS)
 
-Son cuatro pasos. Los dos primeros no necesitan clave ni red; el 3 y el 4 llaman al modelo.
+Son cuatro pasos. Los dos primeros no necesitan clave ni red; el 3 y el 4 llaman al modelo. En Windows o con
+Docker, ver [Setup alternativo](#setup-alternativo-windows-y-docker).
 
 ### 1. Setup (obligatorio)
 
@@ -104,50 +105,6 @@ pregunta suelta, con dos agregados (`agente/chat.py`):
 La memoria dura lo que dura la sesión. El eval y `make ask` no usan este modo: tratan cada pregunta por
 separado.
 
-### En Windows
-
-Los comandos de arriba son de macOS y Linux. El código no depende del sistema operativo, y la CI corre
-los tests offline en Linux y en Windows, pero `make` no viene instalado en Windows. Hay tres opciones:
-
-- **WSL2 (recomendada):** dentro de WSL todo este README funciona tal cual.
-- **Docker Desktop:** ver la sección siguiente.
-- **Nativo, en PowerShell:** se instala uv y se corren los comandos sin `make`.
-
-```powershell
-winget install astral-sh.uv               # o: powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
-git clone https://github.com/Augustorcrc/prueba-tecnica-airbag.git
-cd prueba-tecnica-airbag
-uv sync
-Copy-Item .env.example .env               # y completar ANTHROPIC_API_KEY
-$env:PYTHONUTF8 = "1"                     # salida en UTF-8 aunque se redirija a un archivo
-```
-
-| Con make | En PowerShell |
-|---|---|
-| `make test` | `uv run python -m pytest` |
-| `make test-clave` | `$env:PRUEBAS_CON_CLAVE = "1"; uv run python -m pytest -m requiere_clave` |
-| `make ask Q="..."` | `uv run python main.py "..."` |
-| `make eval` | `uv run python -m eval.evaluar eval/preguntas_ejemplo.jsonl eval/preguntas_propias.jsonl --repeticiones 3 --paralelo 3 --salida reportes/` |
-| `make eval-robustez` | `uv run python -m eval.evaluar eval/preguntas_robustez.jsonl --repeticiones 3 --paralelo 3 --salida reportes/robustez/` |
-| `make chat` | `uv run python main.py --chat` |
-
-`PYTHONUTF8` evita un error de codificación con los acentos y la advertencia "⚠️" cuando la salida no va
-a la consola. `$env:` vale solo para esa ventana de PowerShell.
-
-### Con Docker (alternativa)
-
-La imagen instala exactamente las versiones de `uv.lock` (`uv sync --frozen`), corre como usuario sin
-privilegios y recibe la clave por variable de entorno (nunca queda dentro de la imagen).
-
-```bash
-make docker-test                          # build de la etapa de tests: corre la suite offline
-make docker-build                         # imagen final
-make docker-ask Q="¿Qué sucursales debería visitar esta semana?"   # usa --env-file .env
-make docker-eval REPS=1                   # deja el reporte en ./reportes
-```
-
-La clave va sin comillas en `.env` porque `docker --env-file` no las saca.
-
 ## Estructura del repo
 
 ```
@@ -156,7 +113,8 @@ datos/         CSV de entrada (copia de los provistos por Airbag)
 eval/          evaluar.py, comparadores, juez, preguntas de ejemplo y propias
 oraculo/       recálculo independiente de las respuestas esperadas (pandas puro)
 tests/         tests offline (modelo falso, sin red)
-docs/          grafo.mmd (diagrama del grafo) y curacion_datos.md (limpieza y transformaciones)
+docs/          grafo.mmd (diagrama del grafo), curacion_datos.md (limpieza y transformaciones),
+               eval.md (reglas del eval) y produccion.md (cómo lo serviría en producción)
 main.py        CLI
 ``` 
 
@@ -243,7 +201,7 @@ disco, por estos motivos:
 - Si los datos cambian (`DATOS_DIR`), las validaciones cortan la carga y muestran ejemplos de las filas que
   fallan, en vez de devolver cifras mal sin avisar.
 - Es una decisión para esta escala. En producción, la curación pasa a un job que publica snapshots
-  validados (ver [Cómo lo serviría en producción](#cómo-lo-serviría-en-producción)).
+  validados (ver [`docs/produccion.md`](docs/produccion.md)).
 
 **Herramientas tipadas y genéricas** (`agente/herramientas.py`). En vez de una herramienta por pregunta,
 un catálogo chico que se combina:
@@ -283,12 +241,31 @@ graph TD;
 	cerrar_con_advertencia --> __end__;
 ```
 
-- El modelo alterna con las herramientas. La respuesta sale por una tool `RespuestaFinal`. Con modelos que
-  aceptan `tool_choice="any"` se fuerza; con Sonnet 5.5 va `"auto"` y, si contesta en texto libre, el nodo
-  `recordatorio` le pide que llame a `RespuestaFinal`.
-- `RespuestaFinal` tiene `texto` (para el gerente) y `valor` estructurado (número, texto o lista, para el eval).
-- Después se verifican las cifras; si falla, hay **un** reintento con feedback y, si vuelve a fallar,
-  se cierra con una advertencia visible. Máximo 10 llamadas al modelo.
+El modelo no termina escribiendo un texto suelto: tiene que llenar un formulario con campos fijos. Ese
+formulario es `RespuestaFinal` (`agente/esquemas.py`), y se le da al modelo como si fuera una herramienta más.
+Cuando el modelo "la llama", en realidad está entregando su respuesta en esos campos:
+- `texto`: la respuesta para el gerente;
+- `valor`: la cifra, palabra o lista de IDs principal, que es lo que compara el eval;
+- `recomendaciones`: la lista de sucursales a visitar, que después se imprime como JSON.
+
+A diferencia de las otras herramientas, no consulta datos: el grafo toma esos campos y pasa a validarlos y
+verificarlos.
+
+| Nodo | Qué hace | Sigue a |
+|---|---|---|
+| `modelo` | Llama al LLM con el historial. El LLM pide herramientas, llama a `RespuestaFinal` o contesta en texto | según lo que devolvió (las 3 filas siguientes) |
+| `herramientas` | Ejecuta las herramientas pedidas y agrega los resultados al historial | `modelo` |
+| `recordatorio` | El LLM contestó en texto libre: le pide que use `RespuestaFinal` | `modelo` |
+| `extraer_respuesta` | Valida los campos de `RespuestaFinal` con Pydantic. Si son inválidos, le devuelve el error | `verificar`, o `modelo` si es inválida |
+| `verificar` | Busca cada cifra de la respuesta entre los resultados de las herramientas y valida los IDs de sucursal | fin, o `feedback` |
+| `feedback` | Le devuelve al LLM las cifras sin respaldo para que reescriba la respuesta (una sola vez) | `modelo` |
+| `cerrar_con_advertencia` | Entrega la respuesta con una advertencia visible si la verificación falló dos veces, o un "no pude completar la consulta" si se llegó al tope de 10 llamadas | fin |
+
+Camino típico (2 llamadas al modelo): `modelo` → `herramientas` → `modelo` → `extraer_respuesta` →
+`verificar` → fin.
+
+Con Sonnet 5.5 el modelo no puede obligarse a llamar una tool (`tool_choice="auto"`); por eso existe
+`recordatorio`. Con modelos que aceptan `tool_choice="any"`, se fuerza.
 
 Elegí un grafo propio y no un agente prearmado para controlar la verificación, el reintento y el corte.
 
@@ -308,30 +285,8 @@ toda cifra tiene que salir de una herramienta y pasar por el verificador. Si el 
 cifra, hay una vuelta más. En recomendaciones, el modelo además redacta motivo y
 acción para 5 sucursales.
 
-En esta versión de prueba hay costos que en producción no estarían:
-- cada `make ask` es un proceso nuevo y paga ~2,4 s de arranque (importar LangChain y el SDK de
-  Anthropic, y curar los datos), que no entran en la latencia medida;
-- todo corre con Sonnet 5.5 y sin streaming, y el cache del prompt solo se aprovecha si las preguntas
-  llegan con menos de 5 minutos de diferencia.
-
-En producción se aceleraría así, de mayor a menor impacto:
-- **Sin arranque por pregunta:** el modelo y los datos se inicializan una vez, fuera del handler de la
-  Lambda (ver [Cómo lo serviría en producción](#cómo-lo-serviría-en-producción)). Ahorra ~2,4 s.
-- **Recomendaciones precalculadas:** los datos cambian una vez por snapshot, así que el job que publica
-  el snapshot puede dejar armado el JSON de recomendaciones de la semana (por cadena y por región). La
-  pregunta se responde leyéndolo, sin llamar al modelo.
-- **Una sola llamada en recomendaciones:** si hace falta calcularlas en el momento, el código llama a
-  `candidatos_visita` directo y el modelo solo redacta. Ahorra una vuelta (~2 s).
-- **Cache del prompt siempre caliente:** con tráfico continuo, los ~12k tokens fijos (system más schemas
-  de las herramientas) se leen del cache en casi todas las llamadas. Ya está implementado: en el eval
-  bajó el costo unas 5,6 veces, pero la latencia casi no cambió (4,1 → 4,0 s), porque el tiempo lo
-  domina la generación de la respuesta.
-- **Streaming del texto:** el gerente empieza a leer antes de que termine la respuesta. No baja el tiempo
-  total, pero sí el tiempo hasta ver algo.
-- **Modelo más chico para preguntas simples:** Haiku 5.5 para los conteos y rankings directos, si el eval
-  muestra que mantiene los aciertos. Se cambia con `MODELO_LLM`.
-- **Menos tokens por llamada:** schemas de herramientas más cortos (`pedidos`, `tasa_quejas` y
-  `ranking_sucursales` pesan ~3k caracteres cada uno).
+Qué costos son propios de esta versión de prueba y cómo se aceleraría en producción está en
+[`docs/produccion.md`](docs/produccion.md#latencia-en-producción).
 
 **Fecha de referencia** 2026-03-29, el último día con datos: "esta semana" = 23 al 29 de marzo.
 
@@ -401,22 +356,15 @@ Cada corrida deja su traza (herramientas, argumentos, tokens, costo, latencia, v
 
 ## Cómo funciona el eval
 
-**Extracción.** Primero uso el `valor` estructurado de la respuesta, normalizado según el tipo de la
-pregunta. Si falta o no sirve, un parser lee el texto:
-- números: un `.` o `,` seguido de exactamente 3 dígitos es separador de miles; si no, es decimal
-  ("2,15" = 2.15, "6.646" = 6646). Tomo el primer número del texto, no el más cercano a la esperada.
-  Esta regla no se aplica al `valor`: ahí el schema pide punto decimal sin miles, así que "2.266" se
-  lee como 2,266 (con la regla del texto daba 2266 y fallaba R03v en el eval de robustez);
-- listas: IDs `S###` en orden de aparición, sin duplicados, y comparo en el mismo orden.
+- **Extracción:** uso primero el `valor` estructurado de `RespuestaFinal`, normalizado según el tipo de la
+  pregunta. Si falta, un parser lee el texto: el primer número (con la regla de miles para `.` y `,`) o los
+  IDs `S###` en orden de aparición.
+- **Números y listas:** tolerancia absoluta (`abs(r - e) <= tolerancia + 1e-9`) y lista exacta en el mismo orden.
+- **Textos:** comparo la palabra clave normalizada (minúsculas, sin tildes ni puntuación). Si la esperada es
+  larga o no matchea, decide un LLM juez (Haiku 5.5) con una rúbrica cerrada que juzga hechos, no forma.
+- **"No hay datos":** pasa solo si el texto lo dice explícitamente y `valor` está vacío.
 
-**Textos.** Normalizo (minúsculas, sin tildes ni puntuación) y busco la esperada o sus palabras/tokens
-clave (números, fechas ISO, IDs, palabras de 4+ letras). Si la esperada es larga o no matchea, la decide
-un LLM juez (Haiku 5.5) con una rúbrica cerrada: ¿contiene los hechos esperados?
-¿contradice alguno? Juzga hechos, no forma (la longitud o el detalle extra no restan), recibe el texto y
-el `valor` rotulados por separado y escribe su razón antes del veredicto, para que el sí/no salga del
-razonamiento. Con `--sin-juez` esas corridas fallan con motivo "requiere juez".
-Si la esperada es "no hay datos" (preguntas adversariales), la corrida pasa solo si el texto lo dice
-explícitamente y `valor` está vacío: un número en la respuesta cuenta como inventado.
+Las reglas completas están en [`docs/eval.md`](docs/eval.md).
 
 **Preguntas propias** (`eval/preguntas_propias.jsonl`): cada una tiene una trampa de los datos.
 
@@ -436,47 +384,74 @@ esperadas salen del oráculo.
 
 ## Cómo lo serviría en producción
 
-Propuesta, no implementada. La idea es reutilizar lo que ya existe: `responder()`, `cargar_datos()`, las
-trazas y el eval.
-
-```mermaid
-flowchart LR
-    U[Gerente / app] --> AG[API Gateway<br/>auth + rate limit]
-    AG --> L[Lambda orquestadora<br/>grafo LangGraph + herramientas]
-    L -->|"al arrancar (cold start)"| S3[(S3<br/>snapshot de datos validado)]
-    L --> LLM[Claude<br/>API de Anthropic o Bedrock]
-    L --> SM[Secrets Manager]
-    L --> CW[CloudWatch<br/>trazas y métricas]
-    J[Job programado<br/>EventBridge] -->|"valida con cargar_datos()<br/>y publica"| S3
-```
-
-- **API.** API Gateway con autenticación y rate limit, integrado con una **Lambda que orquesta** el
-  agente: corre el grafo de LangGraph y las herramientas, y devuelve lo mismo que `responder()` (texto,
-  valor y recomendaciones en JSON). Se despliega como imagen de contenedor a partir del Dockerfile
-  actual.
-- **Datos.** Al arrancar, la Lambda carga un snapshot versionado desde S3, fuera del handler: tarda unos
-  2 segundos y las invocaciones siguientes lo reutilizan. Un job programado arma cada snapshot y lo
-  publica solo si pasa las validaciones de `cargar_datos()`. Si una falla, el servicio sigue con el
-  snapshot anterior.
-- **Modelo y secretos.** La clave va en Secrets Manager. Para quedarse dentro de AWS se puede usar
-  Claude en Bedrock cambiando solo `MODELO_LLM`.
-- **Observabilidad.** Las trazas que ya se generan van a CloudWatch, con alarmas de latencia, costo por
-  pregunta y porcentaje de respuestas con advertencia del verificador. Esa última es la señal de calidad.
-- **Deploy.** Los tests offline corren en cada push. Antes de publicar una versión corre `make eval`
-  con clave, con `--umbral` como compuerta. Un eval nocturno contra el snapshot de producción detecta
-  degradaciones.
-- **Límites.** API Gateway corta a los 29 segundos por defecto. Si la latencia medida se acerca a ese
-  límite, se pasa a un esquema asíncrono: la API devuelve un ID, la Lambda procesa la pregunta y guarda
-  el resultado en DynamoDB. Si el volumen de datos crece, DuckDB lee Parquet desde S3 o se reemplaza por
-  un warehouse. Las herramientas mantienen su interfaz, así que el agente no cambia.
+Propuesta, no implementada: API Gateway y una Lambda que corre el grafo actual, un snapshot de datos validado
+en S3, trazas en CloudWatch y `make eval` como compuerta de deploy. Detalle en
+[`docs/produccion.md`](docs/produccion.md).
 
 ## Qué mejoraría con más tiempo
 
 - Intervalos de confianza de Poisson o shrinkage bayesiano para rankear sucursales con poco volumen.
-- Las mejoras de latencia que se listan en [Decisiones de diseño](#decisiones-de-diseño).
+- Las mejoras de latencia de [`docs/produccion.md`](docs/produccion.md#latencia-en-producción).
 - Probar con otros proveedores (el código ya lo permite) y comparar.
 - Más preguntas adversariales (ambiguas, fuera del periodo, sucursales inexistentes).
 - Correr el eval en CI con clave, con `--umbral` como compuerta.
+
+## Tests
+
+```bash
+make test                          # usa uv run python
+make test PY=python                # con otro intérprete (por ejemplo, un venv ya activado)
+```
+
+Corren offline: no necesitan clave ni red. Los marcados `requiere_clave` llaman al modelo real y se
+saltean siempre, aunque haya una clave en `.env`, salvo que se pidan con `make test-clave`.
+CI los corre en cada push (`.github/workflows/tests.yml`).
+
+## Setup alternativo: Windows y Docker
+
+### En Windows
+
+Los comandos de arriba son de macOS y Linux. El código no depende del sistema operativo, y la CI corre
+los tests offline en Linux y en Windows, pero `make` no viene instalado en Windows. Hay tres opciones:
+
+- **WSL2 (recomendada):** dentro de WSL todo este README funciona tal cual.
+- **Docker Desktop:** ver la sección siguiente.
+- **Nativo, en PowerShell:** se instala uv y se corren los comandos sin `make`.
+
+```powershell
+winget install astral-sh.uv               # o: powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+git clone https://github.com/Augustorcrc/prueba-tecnica-airbag.git
+cd prueba-tecnica-airbag
+uv sync
+Copy-Item .env.example .env               # y completar ANTHROPIC_API_KEY
+$env:PYTHONUTF8 = "1"                     # salida en UTF-8 aunque se redirija a un archivo
+```
+
+| Con make | En PowerShell |
+|---|---|
+| `make test` | `uv run python -m pytest` |
+| `make test-clave` | `$env:PRUEBAS_CON_CLAVE = "1"; uv run python -m pytest -m requiere_clave` |
+| `make ask Q="..."` | `uv run python main.py "..."` |
+| `make eval` | `uv run python -m eval.evaluar eval/preguntas_ejemplo.jsonl eval/preguntas_propias.jsonl --repeticiones 3 --paralelo 3 --salida reportes/` |
+| `make eval-robustez` | `uv run python -m eval.evaluar eval/preguntas_robustez.jsonl --repeticiones 3 --paralelo 3 --salida reportes/robustez/` |
+| `make chat` | `uv run python main.py --chat` |
+
+`PYTHONUTF8` evita un error de codificación con los acentos y la advertencia "⚠️" cuando la salida no va
+a la consola. `$env:` vale solo para esa ventana de PowerShell.
+
+### Con Docker (alternativa)
+
+La imagen instala exactamente las versiones de `uv.lock` (`uv sync --frozen`), corre como usuario sin
+privilegios y recibe la clave por variable de entorno (nunca queda dentro de la imagen).
+
+```bash
+make docker-test                          # build de la etapa de tests: corre la suite offline
+make docker-build                         # imagen final
+make docker-ask Q="¿Qué sucursales debería visitar esta semana?"   # usa --env-file .env
+make docker-eval REPS=1                   # deja el reporte en ./reportes
+```
+
+La clave va sin comillas en `.env` porque `docker --env-file` no las saca.
 
 ## Proveedor y modelo
 
@@ -492,14 +467,3 @@ flowchart LR
 El modelo se crea con `init_chat_model`, así que el código es agnóstico: se cambia con
 `MODELO_LLM=proveedor:modelo` (la variable de la clave se deduce del proveedor). Solo lo probé con
 Anthropic.
-
-## Tests
-
-```bash
-make test                          # usa uv run python
-make test PY=python                # con otro intérprete (por ejemplo, un venv ya activado)
-```
-
-Corren offline: no necesitan clave ni red. Los marcados `requiere_clave` llaman al modelo real y se
-saltean siempre, aunque haya una clave en `.env`, salvo que se pidan con `make test-clave`.
-CI los corre en cada push (`.github/workflows/tests.yml`).
