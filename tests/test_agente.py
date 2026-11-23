@@ -1,4 +1,4 @@
-"""Tests de la integración del agente (WP-I): `responder()` con el grafo real y modelo falso."""
+"""Tests de la integración del agente: `responder()` con el grafo real y modelo falso."""
 
 from __future__ import annotations
 
@@ -67,7 +67,7 @@ def test_tools_ejecutan_con_datos_y_respetan_defaults(datos):
 
 
 def test_region_invalida_llega_a_la_herramienta_y_vuelve_error_c2(datos):
-    """M4: region/categoria/canal son str; la herramienta pura normaliza o devuelve error con válidos."""
+    """region/categoria/canal son str; la herramienta pura normaliza o devuelve error con válidos."""
     tools = {t.name: t for t in crear_herramientas(datos)}
     res = tools["contar_quejas"].invoke({"region": "Atlántida"})
     assert "error" in res and "Norte" in res["valores_validos"]
@@ -228,7 +228,7 @@ def test_datos_cacheados(monkeypatch, datos):
     assert len(llamadas) == 1
 
 
-# --------------------------------------------------------------------------- integración con el eval (WP8)
+# --------------------------------------------------------------------------- integración con el eval
 
 
 def test_integracion_eval_p01_p09(datos):

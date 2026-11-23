@@ -1,4 +1,4 @@
-"""Herramientas de consulta (contrato C2): funciones puras `f(datos, **parametros) -> dict`.
+"""Herramientas de consulta: funciones puras `f(datos, **parametros) -> dict`.
 
 Formato de salida: {"resultado", "filtros_aplicados", "periodo", "n_registros", "advertencias"}.
 Errores: {"error": "...", "valores_validos": [...]}, nunca excepciones hacia el LLM.
@@ -48,8 +48,8 @@ from agente.datos import (
     reporte_calidad,
     tasa_emparejada,
 )
-from agente.recomendaciones import candidatos_visita  # noqa: F401  (reexport, dueño: WP5)
-from agente.sql_seguro import consultar_sql  # noqa: F401  (reexport, dueño: WP6)
+from agente.recomendaciones import candidatos_visita  # noqa: F401  (reexport)
+from agente.sql_seguro import consultar_sql  # noqa: F401  (reexport)
 
 __all__ = [
     "info_datos", "buscar_sucursales", "contar_quejas", "pedidos", "tasa_quejas", "ranking_sucursales",

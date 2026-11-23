@@ -1,4 +1,4 @@
-"""Verificador de cifras (contrato C4): toda cifra del texto tiene que salir de una herramienta.
+"""Verificador de cifras: toda cifra del texto tiene que salir de una herramienta.
 
 Idea general:
 

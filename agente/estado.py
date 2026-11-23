@@ -1,4 +1,4 @@
-"""Estado del grafo (Etapa 3)."""
+"""Estado del grafo."""
 
 from __future__ import annotations
 

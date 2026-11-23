@@ -1,4 +1,4 @@
-"""Tests de las herramientas de consulta (C2): preguntas de ejemplo, propias y casos borde.
+"""Tests de las herramientas de consulta: preguntas de ejemplo, propias y casos borde.
 
 Cada resultado se compara con el valor esperado y con el oráculo independiente.
 """
@@ -402,7 +402,7 @@ def test_catalogo_herramientas():
     assert set(h.HERRAMIENTAS) == esperadas
     for nombre, f in h.HERRAMIENTAS.items():
         assert callable(f), nombre
-    # Las 8 propias de WP4 tienen docstring (WP-I lo usa como descripción para el LLM).
+    # Las 8 propias tienen docstring (se usa como descripción para el LLM).
     for nombre in esperadas - {"candidatos_visita", "consultar_sql"}:
         assert (h.HERRAMIENTAS[nombre].__doc__ or "").strip(), nombre
 
@@ -466,7 +466,7 @@ def test_verificador_encuentra_cifras(datos):
     assert verificar_numeros("La tasa fue 7,77.", [p03], "") == ["7,77"]
 
 
-# --- Fix B: orden y extremos (I3) -------------------------------------------------------------
+# --- orden y extremos -----------------------------------------------------------------------
 
 def _pedidos_por_fecha(datos):
     d = datos.diario_sucursal
@@ -524,7 +524,7 @@ def test_orden_invalido(datos, f):
     assert "error" in s and s["valores_validos"] == ["desc", "asc", "cronologico"]
 
 
-# --- Fix B: filtro ciudad (I7) ----------------------------------------------------------------
+# --- filtro ciudad ---------------------------------------------------------------------------
 
 def test_filtro_ciudad(datos):
     ids = sorted(datos.sucursales.loc[datos.sucursales["ciudad"] == "Cancún", "sucursal_id"])
@@ -563,7 +563,7 @@ def test_valores_acotados():
     assert out[-1] == "... (200 en total)" and len(out) < 200
 
 
-# --- Fix B: tasa por sucursal marca las nuevas (M3) --------------------------------------------
+# --- tasa por sucursal marca las nuevas --------------------------------------------------------
 
 def test_tasa_por_sucursal_marca_nuevas(datos):
     s = h.tasa_quejas(datos, agrupar_por="sucursal", orden="asc", n=30, mes="2026-03")
@@ -578,7 +578,7 @@ def test_tasa_por_sucursal_marca_nuevas(datos):
     assert any("ranking_sucursales" in a for a in s["advertencias"])
 
 
-# --- Fix B: periodo parcialmente fuera de rango (M9) -------------------------------------------
+# --- periodo parcialmente fuera de rango -------------------------------------------------------
 
 def test_periodo_recortado_avisa(datos):
     s = h.contar_quejas(datos, fecha_desde="2025-12-01")

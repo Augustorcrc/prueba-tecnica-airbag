@@ -1,14 +1,14 @@
-"""Fachada `responder()` (contrato C5) y post-proceso de recomendaciones (WP-R).
+"""Fachada `responder()` y post-proceso de recomendaciones.
 
 - `responder(pregunta)` arma el grafo con las herramientas LangChain, corre la pregunta y devuelve una
   `Respuesta` con la traza (latencia, tokens, costo, llamadas, verificación, advertencias). Nunca
   propaga errores del proveedor: devuelve una `Respuesta` de tipo dato con el error en la traza.
-- Recomendaciones (D4.2: el score decide, el LLM solo redacta motivo y acción; la evidencia la arma
+- Recomendaciones (el score decide, el LLM solo redacta motivo y acción; la evidencia la arma
   siempre el código con `evidencia_deterministica`): las sucursales recomendadas son
   exactamente las de `candidatos_visita`, en el mismo orden. Si el LLM cambia el orden, agrega otra
   sucursal o le falta alguna, se corrige en forma determinística y se deja en `traza.advertencias`.
   Los ítems descartados por el verificador se reponen con el hook `completar_recomendaciones`.
-- Red de seguridad (C2): si la respuesta es de recomendaciones, o se llamó a `candidatos_visita`, o la
+- Red de seguridad: si la respuesta es de recomendaciones, o se llamó a `candidatos_visita`, o la
   pregunta pide recomendaciones según `es_pregunta_de_recomendacion`, y la salida no es una lista de
   recomendaciones alineada con `candidatos_visita`, el JSON se arma en forma determinística
   (`candidatos_visita` + `item_deterministico`). Cubre el corte por pasos, la respuesta de tipo dato,
@@ -123,7 +123,7 @@ def trazas_dir() -> Path:
     return Path(valor) if valor else RAIZ / "reportes" / "trazas"
 
 
-# --------------------------------------------------------------------------- recomendaciones (WP-R)
+# --------------------------------------------------------------------------- recomendaciones
 
 
 def _num(x: Any) -> str:
@@ -312,7 +312,7 @@ def completar_recomendaciones(
 def alinear_con_candidatos(
     respuesta: RespuestaFinal, estado: dict, registro: dict | None = None
 ) -> tuple[RespuestaFinal, list[str]]:
-    """D4.2: deja exactamente las sucursales de `candidatos_visita`, en su orden.
+    """Deja exactamente las sucursales de `candidatos_visita`, en su orden.
 
     Devuelve (respuesta corregida, advertencias). No inventa: si no hubo `candidatos_visita`, deja la
     respuesta como vino y lo advierte.
@@ -366,7 +366,7 @@ def alinear_con_candidatos(
     return corregida, advertencias
 
 
-# --------------------------------------------------------------------------- red de seguridad (C2)
+# --------------------------------------------------------------------------- red de seguridad
 
 
 def _normalizar(texto: str) -> str:
@@ -435,7 +435,7 @@ def parametros_de_pregunta(pregunta: str) -> dict:
 
 
 def _resultado_candidatos(estado: dict, pregunta: str, datos: "Datos") -> dict | None:
-    """Resultado C2 de candidatos a usar: el de la última llamada exitosa del modelo; si no hubo, se
+    """Resultado de `candidatos_visita` a usar: el de la última llamada exitosa del modelo; si no hubo, se
     llama a `candidatos_visita` con lo detectado en la pregunta (y, si eso da error, con los defaults)."""
     llamada = ultima_llamada_candidatos(estado)
     if llamada is not None:
@@ -553,7 +553,7 @@ def responder(
     historial: "list[BaseMessage] | None" = None,
     llamadas_previas: list[dict] | None = None,
 ) -> Respuesta:
-    """Responde una pregunta del gerente (C5). Ver docstring del módulo.
+    """Responde una pregunta del gerente. Ver docstring del módulo.
 
     `historial` y `llamadas_previas` son opcionales y solo los usa el modo chat (`agente/chat.py`); sin
     ellos el comportamiento es el de una pregunta suelta. `historial` son los mensajes de los turnos

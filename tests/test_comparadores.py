@@ -231,7 +231,7 @@ def test_sin_datos_acepta_negaciones():
         assert comparar(r, _item_sin_datos(), usar_juez=False).ok, texto
 
 
-# ---------------------------------------------------------------- texto: respuestas incorrectas (Fix C, I1)
+# ---------------------------------------------------------------- texto: respuestas incorrectas
 
 
 @pytest.mark.parametrize(

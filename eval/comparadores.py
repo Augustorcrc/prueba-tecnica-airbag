@@ -1,4 +1,4 @@
-"""Extracción y comparación de respuestas según el tipo (Etapa 5).
+"""Extracción y comparación de respuestas según el tipo.
 
 Flujo por corrida:
 

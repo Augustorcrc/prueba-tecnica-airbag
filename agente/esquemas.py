@@ -1,4 +1,4 @@
-"""Esquemas Pydantic de la salida del agente (contrato C3).
+"""Esquemas Pydantic de la salida del agente.
 
 `RespuestaFinal` se registra como herramienta de salida del grafo: la única forma de terminar.
 `Respuesta` es lo que devuelve `responder()` y consume el eval.

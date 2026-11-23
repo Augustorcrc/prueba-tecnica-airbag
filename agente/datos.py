@@ -1,4 +1,4 @@
-"""Capa de datos (contrato C1): carga, limpieza y vistas DuckDB.
+"""Capa de datos: carga, limpieza y vistas DuckDB.
 
 Única fuente de verdad: todo el resto del agente consume `Datos`. El LLM nunca ve los CSV.
 
@@ -7,15 +7,15 @@ Decisiones documentadas
 - Periodo: 2026-01-05 (lunes) a 2026-03-29 (domingo) = 84 días, 12 semanas.
 - Fechas: columnas `datetime64[ns]` normalizadas (sin hora) en los DataFrames; en DuckDB se
   exponen como `DATE`.
-- Ventas (D1.2): `dato_invalido = pedidos < 0 or pedidos >= 99999`. `pedidos_validos` es dtype
+- Ventas: `dato_invalido = pedidos < 0 or pedidos >= 99999`. `pedidos_validos` es dtype
   nullable `Int64` con `<NA>` en las filas inválidas (NULL en DuckDB). Además corre un chequeo
   estadístico (z robusto con mediana/MAD por sucursal, |z| > 8) que SOLO agrega avisos.
 - Quejas: se deduplican por `queja_id` (se queda la primera aparición; si hay IDs repetidos con
-  contenido distinto se agrega un aviso). Cada queja lleva `en_dia_invalido` (D1.1, opción B):
+  contenido distinto se agrega un aviso). Cada queja lleva `en_dia_invalido`:
   la queja cae en un (fecha, sucursal) cuya fila de ventas es inválida. Los conteos de quejas
   incluyen todas; las tasas usan `tasa_emparejada` (excluye esos días del numerador y del
   denominador).
-- Sucursales (D1.3): `es_nueva` = `fecha_apertura` dentro del periodo.
+- Sucursales: `es_nueva` = `fecha_apertura` dentro del periodo.
 - Calendario (ventas, quejas y diario_sucursal):
     * `semana_inicio`: lunes de la semana (datetime64 / DATE).
     * `semana_n`: 1..12 (semana 1 = 2026-01-05..2026-01-11).
@@ -311,7 +311,7 @@ def cargar_datos(dir: Path | None = None) -> Datos:
 
     datos = Datos(sucursales=suc, ventas=ventas, quejas=quejas, capacitaciones=cap,
                   diario_sucursal=diario, con=con, avisos=avisos)
-    # Metadatos de calidad: atributo privado (no es campo del contrato C1).
+    # Metadatos de calidad: atributo privado (no es un campo público de `Datos`).
     datos._calidad = {  # type: ignore[attr-defined]
         "directorio": str(directorio),
         "filas_crudas": crudas,
@@ -324,7 +324,7 @@ def cargar_datos(dir: Path | None = None) -> Datos:
 def tasa_emparejada(diario: pd.DataFrame) -> dict:
     """Tasa de quejas por 1.000 pedidos de un recorte de `diario_sucursal`.
 
-    REGLA ÚNICA DE TASAS DE TODA LA APP (D1.1, opción B): numerador y denominador emparejados,
+    REGLA ÚNICA DE TASAS DE TODA LA APP: numerador y denominador emparejados,
     sin los días con dato de ventas inválido:
 
         tasa = sum(quejas en días válidos) / sum(pedidos_validos) * 1000

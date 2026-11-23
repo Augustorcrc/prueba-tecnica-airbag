@@ -1,4 +1,4 @@
-"""Tests del verificador de cifras (contrato C4). No necesitan clave ni red."""
+"""Tests del verificador de cifras. No necesitan clave ni red."""
 
 import json
 
@@ -17,7 +17,7 @@ TASA = [{"resultado": {"tasa": 2.1468}, "n_registros": 1}]
 
 
 def c2(resultado, advertencias=None):
-    """Resultado en formato C2."""
+    """Resultado en el formato de las herramientas."""
     return {
         "resultado": resultado,
         "filtros_aplicados": {},

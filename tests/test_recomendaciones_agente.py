@@ -1,4 +1,4 @@
-"""Tests de la integración de recomendaciones con el agente (WP-R).
+"""Tests de la integración de recomendaciones con el agente.
 
 Offline con `ModeloFalso` y datos reales; los que usan el modelo real se saltean sin clave.
 """
@@ -270,7 +270,7 @@ def test_items_deterministicos_verifican_por_construccion(datos, kw):
         assert item.motivo.startswith(PREFIJO_PREVENTIVA) == bool(c["preventiva"])
 
 
-# --------------------------------------------------------------------------- clasificador y red de seguridad (C2)
+# --------------------------------------------------------------------------- clasificador y red de seguridad
 
 
 @pytest.mark.parametrize("pregunta", PIDEN_RECOMENDACION)

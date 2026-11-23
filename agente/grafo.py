@@ -1,4 +1,4 @@
-"""Grafo LangGraph del agente (contrato C5).
+"""Grafo LangGraph del agente.
 
 ```
 START → modelo
@@ -62,7 +62,7 @@ def construir_grafo(
     - `verificador`: función con la firma de `agente.verificador.verificar_respuesta`; por defecto se
       importa esa en tiempo de llamada.
     - `ids_validos`: IDs de sucursal válidos; `None` = no se validan IDs (se ignora `ids_invalidos`).
-    - `completar_recomendaciones`: hook de WP-R para reponer ítems descartados al cerrar con advertencia.
+    - `completar_recomendaciones`: hook de recomendaciones para reponer ítems descartados al cerrar con advertencia.
     - `tool_choice`: "any" (obliga a llamar alguna herramienta) o "auto". Si no se pasa, se elige según
       el modelo (`tool_choice_elegido`): Sonnet 5.5, Opus 5.5 y Fable 5.1 no aceptan "any".
     """

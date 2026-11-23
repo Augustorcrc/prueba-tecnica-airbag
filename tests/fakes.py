@@ -108,7 +108,7 @@ def _numeros(texto: str) -> set[str]:
 
 
 class VerificadorFalso:
-    """Verificador con la firma de C4.
+    """Verificador con la firma de `verificar_respuesta`.
 
     - Con `guion` (lista de dicts): devuelve uno por llamada, en orden.
     - Sin guion: verificación simple: toda cifra del texto / motivo / evidencia tiene que aparecer en

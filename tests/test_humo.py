@@ -1,4 +1,4 @@
-"""Test de humo: los módulos de los contratos se importan y la config funciona sin clave."""
+"""Test de humo: los módulos principales se importan y la config funciona sin clave."""
 
 import importlib
 from pathlib import Path

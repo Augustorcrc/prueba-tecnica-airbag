@@ -194,7 +194,7 @@ def test_main_jsonl_invalido_y_falta_clave(tmp_path, monkeypatch, capsys):
     assert ev.main([str(EJEMPLO), "--salida", str(tmp_path)], responder=lambda p: None) == 1
 
 
-# ---------------------------------------------------------------- Fix C: costo por pregunta, ids, rate limit
+# ---------------------------------------------------------------- costo por pregunta, ids, rate limit
 
 
 def test_costo_y_tokens_por_pregunta_no_se_multiplican_por_repeticiones(tmp_path):

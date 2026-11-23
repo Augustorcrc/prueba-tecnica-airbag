@@ -1,4 +1,4 @@
-"""Tests del SQL de respaldo restringido (WP6, contrato C7). No requieren clave."""
+"""Tests del SQL de respaldo restringido. No requieren clave."""
 
 import json
 

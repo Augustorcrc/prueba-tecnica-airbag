@@ -1,4 +1,4 @@
-"""Score determinístico de sucursales a visitar (contrato C7).
+"""Score determinístico de sucursales a visitar.
 
 El LLM nunca decide a quién visitar: esta función ordena las sucursales con una regla fija y
 devuelve los componentes del score para que el agente arme el motivo y la evidencia.
@@ -176,7 +176,7 @@ def candidatos_visita(
     fecha_hasta: date | str | None = None,
     incluir_nuevas: bool = False,
 ) -> dict:
-    """Sucursales a visitar: superan `ratio_regional` >= 1.5, ordenadas por `exceso_quejas` (formato C2).
+    """Sucursales a visitar: superan `ratio_regional` >= 1.5, ordenadas por `exceso_quejas` (formato de herramienta).
 
     La ventana reciente es `periodo`; tasas en quejas cada 1.000 pedidos. `n` máximo 10.
 

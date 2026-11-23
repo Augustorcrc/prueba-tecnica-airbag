@@ -1,4 +1,4 @@
-"""C1: el payload que se mandaría a Anthropic se arma sin errores para el modelo real (offline).
+"""El payload que se mandaría a Anthropic se arma sin errores para el modelo real (offline).
 
 Construye el `ChatAnthropic` REAL como `agente.crear_modelo()` (con una clave falsa), le liga las
 herramientas reales con el `tool_choice` que elige `construir_grafo` y arma el payload con
@@ -89,7 +89,7 @@ def test_responder_pasa_el_tool_choice_explicito(monkeypatch, datos):
 
 
 def test_la_config_vieja_hubiera_fallado(monkeypatch, datos):
-    """Documenta C1: con temperature=0 la librería lanza ValueError para Sonnet 5.5."""
+    """Documenta que con temperature=0 la librería lanza ValueError para Sonnet 5.5."""
     from langchain.chat_models import init_chat_model
 
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-falsa")

@@ -1,4 +1,4 @@
-"""Tests de la capa de datos (WP1, contrato C1)."""
+"""Tests de la capa de datos."""
 
 import json
 import shutil

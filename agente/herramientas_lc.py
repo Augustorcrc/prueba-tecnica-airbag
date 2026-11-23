@@ -1,4 +1,4 @@
-"""Wrappers LangChain (`StructuredTool`) sobre las herramientas puras de `herramientas.py` (WP-I).
+"""Wrappers LangChain (`StructuredTool`) sobre las herramientas puras de `herramientas.py`.
 
 Cada tool tiene un `args_schema` Pydantic explícito con descripción de cada campo en español.
 
@@ -10,7 +10,7 @@ Cada tool tiene un `args_schema` Pydantic explícito con descripción de cada ca
   que el modelo copia tal cual del enum; el enum en el schema lo guía mejor que una descripción.
 - La función envuelta cierra sobre `datos`, descarta los argumentos `None` (así rigen los defaults de
   la herramienta pura y los parámetros opcionales nuevos solo se pasan si se usan) y devuelve el dict
-  C2 tal cual.
+  tal cual.
 """
 
 from __future__ import annotations
@@ -195,7 +195,7 @@ def normalizar_valor(valor: Any, validos: tuple[str, ...]) -> Any:
 
 
 def _normalizar_candidatos(kwargs: dict) -> dict:
-    """`candidatos_visita` exige el valor exacto: se normaliza acá (lo inválido pasa y da error C2)."""
+    """`candidatos_visita` exige el valor exacto: se normaliza acá (lo inválido pasa y da el error de la herramienta)."""
     if "region" in kwargs:
         kwargs["region"] = normalizar_valor(kwargs["region"], REGIONES)
     if "categoria" in kwargs:

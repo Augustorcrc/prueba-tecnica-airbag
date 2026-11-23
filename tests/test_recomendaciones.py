@@ -1,4 +1,4 @@
-"""Tests del score determinístico de recomendaciones (contrato C7, parte sin LLM)."""
+"""Tests del score determinístico de recomendaciones (parte sin LLM)."""
 
 import dataclasses
 import json
@@ -196,7 +196,7 @@ def test_tasa_emparejada_s035(datos):
     assert round(t, 3) == 1.393
 
 
-# --- Fix B: categoría (I4) y tope/tamaño (M5) ---------------------------------------------------
+# --- categoría y tope/tamaño ---------------------------------------------------------------------
 
 def test_categoria_define_la_accion(datos):
     r = candidatos_visita(datos, categoria="limpieza")

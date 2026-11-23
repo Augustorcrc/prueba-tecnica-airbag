@@ -1,4 +1,4 @@
-"""Tests del grafo (WP7) con modelo falso: sin clave ni red."""
+"""Tests del grafo con modelo falso: sin clave ni red."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""System prompt del agente (WP-I / WP-R)."""
+"""System prompt del agente."""
 
 from __future__ import annotations
 

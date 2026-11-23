@@ -1,4 +1,4 @@
-"""LLM juez para preguntas de texto largo (Etapa 5).
+"""LLM juez para preguntas de texto largo.
 
 Se usa solo cuando las reglas deterministas de `eval.comparadores` no alcanzan (por ejemplo, el
 resumen de P10). Modelo: `agente.config.modelo_juez()` con salida estructurada `Veredicto`

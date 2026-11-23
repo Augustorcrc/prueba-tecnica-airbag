@@ -1,4 +1,4 @@
-"""Script de evaluación (contrato C6).
+"""Script de evaluación.
 
 Uso:
     python -m eval.evaluar <ruta.jsonl> [<ruta2.jsonl> ...] [--repeticiones 3] [--salida reportes/]

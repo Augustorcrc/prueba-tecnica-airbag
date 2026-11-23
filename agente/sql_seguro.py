@@ -1,4 +1,4 @@
-"""SQL de respaldo restringido (contrato C7).
+"""SQL de respaldo restringido.
 
 `consultar_sql(datos, sql)` ejecuta una consulta de solo lectura escrita por el LLM cuando ninguna
 herramienta tipada alcanza. Capas de defensa:
@@ -257,7 +257,7 @@ def _tamano(salida: dict) -> int:
 # ---------------------------------------------------------------------------
 
 def consultar_sql(datos: "Datos", sql: str, timeout_s: float = TIMEOUT_S) -> dict:
-    """Ejecuta un SELECT de solo lectura sobre las vistas limpias (contrato C7, formato C2).
+    """Ejecuta un SELECT de solo lectura sobre las vistas limpias (mismo formato que las demás herramientas).
 
     Devuelve `{"resultado": {"columnas", "filas", "truncado"}, "filtros_aplicados": {"sql"},
     "periodo", "n_registros", "advertencias"}` o `{"error", "valores_validos"}`. Nunca lanza.

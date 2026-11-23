@@ -1,4 +1,4 @@
-"""Nodos del grafo (Etapa 3).
+"""Nodos del grafo.
 
 Cada nodo es una función `estado -> actualización parcial`. Los que necesitan el modelo, las
 herramientas o el verificador se construyen con fábricas (`crear_nodo_*`) que devuelven closures, así
@@ -33,7 +33,7 @@ MENSAJE_FINAL_IGNORADA = (
 MENSAJE_FINAL_DUPLICADA = "RespuestaFinal duplicada en el mismo turno: solo se considera la primera."
 
 Verificador = Callable[[RespuestaFinal, list, str, set], dict]
-# Hook de WP-R: recibe (respuesta_filtrada, items_descartados, estado) y devuelve la respuesta
+# Hook de recomendaciones: recibe (respuesta_filtrada, items_descartados, estado) y devuelve la respuesta
 # completada con los siguientes candidatos. Si es None, la respuesta queda solo con los ítems que
 # verificaron.
 CompletarRecomendaciones = Callable[[RespuestaFinal, list[ItemRecomendacion], Estado], RespuestaFinal]
@@ -152,7 +152,7 @@ def extraer_respuesta(estado: Estado) -> dict:
 
 
 def _verificador_por_defecto() -> Verificador:
-    # Import en tiempo de llamada: el módulo lo implementa otro WP y se puede reemplazar en tests.
+    # Import en tiempo de llamada: así se puede reemplazar en tests.
     from agente import verificador
 
     return verificador.verificar_respuesta
@@ -302,7 +302,7 @@ def _cerrar_recomendaciones(
         else:
             conservados.append(item)
     nueva = respuesta.model_copy(update={"recomendaciones": conservados})
-    # HOOK WP-R: completar con los siguientes candidatos de `candidatos_visita` hasta llegar a N.
+    # Hook de recomendaciones: completar con los siguientes candidatos de `candidatos_visita` hasta llegar a N.
     if completar is not None and descartados:
         nueva = completar(nueva, descartados, estado)
     return {"respuesta": nueva, "advertencias": advertencias}
